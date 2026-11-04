@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Stable version (vMAJOR.MINOR.PATCH)
+        description: Stable version (v0.MINOR.PATCH or v1.MINOR.PATCH)
         required: true
         type: string
 
@@ -31,7 +31,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
         run: |
-          [[ $VERSION =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          # A v2 or later needs a /v2 module path first, or consumers cannot use the tag.
+          [[ $VERSION =~ ^v[01]\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           # An existing tag is accepted only at this commit, so a rerun can finish a release.
           if ! gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$VERSION" -f sha="$GITHUB_SHA" >/dev/null; then
             test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$VERSION" --jq .sha)" = "$GITHUB_SHA"
