@@ -85,8 +85,8 @@ func runWithTemporal(m *testing.M) int {
 			ExpiringApprovalFlow, TimeoutFlow, HeartbeatFlow, SilentFlow, ReplayFlow, AttributesFlow, AttributesChildFlow,
 			WaitingFlow, InheritanceFlow, VersionFlow, SmallFlow, BadStepFlow, ChildOnOwnQueueFlow, WrappedAbortFlow,
 			WrappingFlow, ParallelFlow, CleanupFlow, CountdownFlow, AttributeEchoFlow, CancelOneStepFlow, ChargeThenRefundFlow,
-			DetachingParentFlow, CronChildFlow, DetailReadingFlow, AttributeRecordingFlow, InheritingDetachingParentFlow,
-			CanceledDetachingFlow, HoldingEchoFlow, InvalidChildStartFlow, DuplicateChildStartFlow, CronChildStartFlow,
+			DetachingParentFlow, DetailReadingFlow, AttributeRecordingFlow, InheritingDetachingParentFlow,
+			CanceledDetachingFlow, HoldingEchoFlow, InvalidChildStartFlow, DuplicateChildStartFlow,
 			IdleFlow, IdleDetachingParentFlow, UnpolledChildStartFlow).
 		WithSteps(DoubleStep, FailingStep, PlainFailureStep, AbortStep, ApprovalStep, SlowStep, HeartbeatStep, SilentStep,
 			PurgeCacheStep, AttributesStep, InheritanceStep, WrappedAbortStep, DecliningStep, CleanupStep, AttributeEchoStep, ChargingStep, RefundStep, DetailedStep).
@@ -665,7 +665,7 @@ func TestConfigDecodedFromJSONRuns(t *testing.T) {
 	ctx := testContext(t)
 	flowID := uniqueKey(t)
 
-	raw := fmt.Sprintf(`{"id":%q,"priority":"high","fairness":"tenant-json","maximum_attempts":1}`, flowID)
+	raw := fmt.Sprintf(`{"id":%q,"priority":"high","fair_key":"tenant-json","max_attempts":1}`, flowID)
 	config := &gush.FlowConfig{}
 	require.NoError(t, gush.Decode([]byte(raw), config))
 
@@ -678,23 +678,6 @@ func TestConfigDecodedFromJSONRuns(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, gush.PriorityHigh, flow.Priority)
 	assert.Equal(t, "tenant-json", flow.FairKey)
-}
-
-func TestCronFlowRunsUntilStopped(t *testing.T) {
-	ctx := testContext(t)
-	flowID := uniqueKey(t)
-
-	_, err := testClient.StartFlow(ctx, flowRequest(SmallFlow, nil, nil),
-		gush.WithID(flowID),
-		gush.WithCron("0 0 1 1 *"),
-	)
-	require.NoError(t, err)
-
-	flow, err := testClient.GetFlow(ctx, flowID)
-	require.NoError(t, err)
-	assert.Equal(t, "Running", flow.Status)
-
-	require.NoError(t, testClient.TerminateFlow(ctx, flowID, "test finished"))
 }
 
 func TestCancelFlow(t *testing.T) {
@@ -850,8 +833,10 @@ func otlpRecords(t *testing.T) (*httptest.Server, *sync.Map) {
 // by flow_id and the inherited attributes, which is what distributed log search relies on.
 func TestLogsFromOneRunReachTheCollectorCorrelated(t *testing.T) {
 	server, records := otlpRecords(t)
-	t.Setenv("OTEL_ENDPOINT", "")
-	t.Setenv("OTEL_HTTP_ENDPOINT", server.URL)
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", server.URL)
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "")
 
 	clientOptions := gush.Options{HostPort: testHostPort}
 	exporting, err := gush.Dial(clientOptions)
@@ -917,7 +902,7 @@ func TestClientsRunInTheirNamespace(t *testing.T) {
 
 func TestPackageLevelFunctionsUseTheDefaultClient(t *testing.T) {
 	ctx := testContext(t)
-	t.Setenv("TEMPORAL_ENDPOINT", testHostPort)
+	t.Setenv("TEMPORAL_ADDRESS", testHostPort)
 	t.Setenv("TEMPORAL_NAMESPACE", "")
 	defer gush.Close()
 
@@ -1300,61 +1285,6 @@ func TestStartFlowRunsAChildOnItsQueue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "gush-unpolled", flow.Queue)
 	require.NoError(t, testClient.TerminateFlow(ctx, childID, "test"))
-}
-
-func TestRunFlowJoiningACronScheduleWaitsForIt(t *testing.T) {
-	ctx := testContext(t)
-	flowID := uniqueKey(t)
-
-	_, err := testClient.StartFlow(ctx, flowRequest(SmallFlow, nil, nil), gush.WithID(flowID), gush.WithCron("0 0 1 1 *"))
-	require.NoError(t, err)
-
-	waiting, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	err = testClient.RunFlow(waiting, flowRequest(SmallFlow, nil, nil), gush.WithID(flowID))
-	assert.Error(t, err)
-	assert.ErrorIs(t, waiting.Err(), context.DeadlineExceeded)
-	require.NoError(t, testClient.TerminateFlow(ctx, flowID, "test"))
-}
-
-func CronChildStartFlow(ctx *gush.FlowContext) (any, error) {
-	var childID string
-	err := ctx.Decode(&childID)
-	if err != nil {
-		return nil, err
-	}
-
-	request := gush.FlowRequest{Flow: SmallFlow}
-	return ctx.StartFlow(request, gush.WithID(childID), gush.WithCron("0 0 1 1 *"))
-}
-
-func TestStartFlowRunsACronChild(t *testing.T) {
-	ctx := testContext(t)
-	childID := uniqueKey(t)
-
-	var started string
-	err := testClient.RunFlow(ctx, flowRequest(CronChildStartFlow, childID, &started))
-	require.NoError(t, err)
-	assert.Equal(t, childID, started)
-
-	flow, err := testClient.GetFlow(ctx, childID)
-	require.NoError(t, err)
-	assert.Equal(t, "Running", flow.Status)
-	require.NoError(t, testClient.TerminateFlow(ctx, childID, "test"))
-}
-
-func CronChildFlow(ctx *gush.FlowContext) (any, error) {
-	request := gush.FlowRequest{Flow: SmallFlow}
-	return nil, ctx.RunFlow(request, gush.WithCron("0 0 1 1 *"))
-}
-
-func TestRunFlowAbortsOnACronChild(t *testing.T) {
-	ctx := testContext(t)
-
-	err := testClient.RunFlow(ctx, flowRequest(CronChildFlow, nil, nil))
-	require.Error(t, err)
-	assert.True(t, gush.IsPermanentError(err))
-	assert.Contains(t, err.Error(), "StartFlow")
 }
 
 func TestParallelStepsRunThroughWithContext(t *testing.T) {

@@ -104,8 +104,6 @@ request := gush.FlowRequest{Flow: Notify, Input: receipt}
 err := ctx.RunFlow(request)
 ```
 
-`WithCron("0 2 * * *")` runs a flow on a schedule in UTC until it is canceled, terminated or stopped by `WithTimeout`. Start it with `StartFlow`, because `RunFlow` returns an error: a schedule has no result to wait for. A client's `StartFlow` returns an error for an invalid expression. On a child flow, Temporal instead fails the parent's workflow task, which retries until the parent's `WithTimeout`, so check an expression that comes from outside first.
-
 Flows and steps are registered under their bare Go function names, and can be called by that name as a string. Two functions with the same name in different packages collide, and `Serve` reports it. Use `NewFlowHandler` and `NewStepHandler` to choose a name, which closures and the instantiations of a generic function need too.
 
 `string` and `[]byte` travel as raw bytes and everything else as JSON, so read a value back as the type it was written.
@@ -156,10 +154,9 @@ A step that is already running only finds out about the cancellation through `ct
 | `WithFairKey(key)` | both | Group to schedule fairly against, such as a tenant. |
 | `WithLogAttribute(k, v)` | both | Attribute on every log line of this run and its children. |
 | `WithLogAttributes(m)` | both | The same, for several attributes. |
-| `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's input, and a child flow gets an error. `RunFlow` then waits for that flow, even across a `WithCron` schedule. |
-| `WithTimeout(d)` | flow | Limit on the whole execution, including every retry and every scheduled run. |
-| `WithCron(expr)` | flow | Schedule in UTC. Use with `StartFlow`. |
-| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Fields left out of the JSON keep their defaults. Whoever applies it chooses `RunFlow` or `StartFlow`, and one with a cron schedule needs `StartFlow`. |
+| `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's input, and a child flow gets an error. |
+| `WithTimeout(d)` | flow | Limit on the whole execution, including every retry. |
+| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Fields left out of the JSON keep their defaults. Whoever applies it chooses `RunFlow` or `StartFlow`. |
 | `WithQueue(q)` | step | Runs on another queue. |
 | `WithAttemptTimeout(d)` | step | Limit on each attempt, not the step as a whole. |
 | `WithHeartbeatTimeout(d)` | step | Fails an attempt that stops calling `ctx.Heartbeat()`. |
@@ -282,13 +279,14 @@ Lines written while Temporal replays a flow are dropped, so each appears once. H
 
 ### Export over OTLP
 
-`gush.Dial` starts exporting when an endpoint is set, and `Close` flushes. A process that logs without a client calls `gush.InitLogExport()` itself. The first variable set here wins:
+`gush.Dial` starts exporting when `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and `Close` flushes. A process that logs without a client calls `gush.InitLogExport()` itself. [OpenTelemetry's other variables](https://opentelemetry.io/docs/specs/otel/protocol/exporter/) set the headers and TLS, and the protocol is `http/protobuf` unless they ask for `grpc`:
 
-| Variable | Protocol |
-|---|---|
-| `OTEL_ENDPOINT` | OTLP/gRPC. A bare `host:port` is plaintext; a URL's scheme chooses, and `https://` means TLS. |
-| `OTEL_HTTP_ENDPOINT` | OTLP/HTTP, as an `http://` or `https://` URL. Logs go to `/v1/logs`. |
-| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT` | The [standard OpenTelemetry variables](https://opentelemetry.io/docs/specs/otel/protocol/exporter/), with their protocol, header and TLS settings. |
+```sh
+OTEL_EXPORTER_OTLP_ENDPOINT=https://collector:4317
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+```
+
+The endpoint must be a URL, or `Dial` returns an error. `https://` is TLS and `http://` is plaintext, and `OTEL_EXPORTER_OTLP_INSECURE` does not change that. Give the port too, because leaving it out does not select OTLP's 4317 or 4318. Over HTTP, `/v1/logs` is added to `OTEL_EXPORTER_OTLP_ENDPOINT`, but `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` is used as written, so it needs the full path, such as `http://collector:4318/v1/logs`.
 
 An application with its own logging pipeline keeps control: a provider set with OpenTelemetry's `global.SetLoggerProvider` always wins, and Gush uses it instead of starting an export. Importing Gush never changes that global. With no provider and no endpoint, logs go to standard error, as do the Temporal SDK's own messages unless `Options.Logger` says otherwise.
 
@@ -328,7 +326,7 @@ options := gush.Options{
 c, err := gush.Dial(options)
 ```
 
-An empty `HostPort` falls back to `TEMPORAL_ENDPOINT`, then `TEMPORAL_ADDRESS`, then `localhost:7233`. An empty `Namespace` falls back to `TEMPORAL_NAMESPACE`, then the default namespace.
+An empty `HostPort` falls back to `TEMPORAL_ADDRESS`, then `localhost:7233`. An empty `Namespace` falls back to `TEMPORAL_NAMESPACE`, then the default namespace.
 
 The package-level functions, such as `gush.RunFlow` and `gush.Serve`, use a shared client configured from those variables. They suit a process that talks to one server.
 

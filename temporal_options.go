@@ -31,7 +31,6 @@ func newStartWorkflowOptions(queue string, config *FlowConfig) client.StartWorkf
 		ID:                       config.ID,
 		TaskQueue:                queue,
 		RetryPolicy:              config.temporalPolicy(),
-		CronSchedule:             config.Cron,
 		Priority:                 newTemporalPriority(&config.CommonConfig),
 		WorkflowExecutionTimeout: config.Timeout,
 	}
@@ -43,7 +42,6 @@ func newChildWorkflowOptions(queue string, config *FlowConfig) workflow.ChildWor
 		WorkflowID:               config.ID,
 		TaskQueue:                queue,
 		RetryPolicy:              config.temporalPolicy(),
-		CronSchedule:             config.Cron,
 		Priority:                 newTemporalPriority(&config.CommonConfig),
 		WorkflowExecutionTimeout: config.Timeout,
 		VersioningIntent:         defaultCommandVersioningIntent(),
