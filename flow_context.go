@@ -111,6 +111,10 @@ func (flowCtx *FlowContext) RunStep(step any, input, output any, options ...Step
 	if err != nil {
 		return flowCtx.Abort(err)
 	}
+	err = config.validate()
+	if err != nil {
+		return flowCtx.Abort(err)
+	}
 	payload, err := EncodePayload(input)
 	if err != nil {
 		return flowCtx.Abort(err)
@@ -136,6 +140,10 @@ func (flowCtx *FlowContext) RunStep(step any, input, output any, options ...Step
 // priority, fair key and log attributes unless options override them.
 func (flowCtx *FlowContext) RunFlow(request FlowRequest, options ...FlowOption) error {
 	config := flowCtx.childFlowConfig(options)
+	err := config.validate()
+	if err != nil {
+		return flowCtx.Abort(err)
+	}
 
 	childOptions := newChildWorkflowOptions(request.Queue, config)
 	childContext := workflow.WithChildOptions(flowCtx.Context, childOptions)
@@ -168,6 +176,10 @@ func (flowCtx *FlowContext) StartFlow(request FlowRequest, options ...FlowOption
 		return "", err
 	}
 	config := flowCtx.childFlowConfig(options)
+	err = config.validate()
+	if err != nil {
+		return "", flowCtx.Abort(err)
+	}
 
 	// Canceling a context also cancels the children started on it.
 	detached, _ := workflow.NewDisconnectedContext(flowCtx.Context)

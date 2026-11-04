@@ -143,7 +143,7 @@ A step that is already running only finds out about the cancellation through `ct
 
 | Option | Applies to | Effect |
 |---|---|---|
-| `WithMaxAttempts(n)` | both | Total attempts, including the first. Zero means the default, and `gush.UnlimitedAttempts` keeps retrying. |
+| `WithMaxAttempts(n)` | both | Total attempts, including the first. Zero means the default, and `gush.UnlimitedAttempts` keeps retrying. Any other negative number is an error. |
 | `WithInitialInterval(d)` | both | Delay before the first retry. |
 | `WithBackoffCoefficient(f)` | both | Multiplier on the delay after each retry. |
 | `WithMaxInterval(d)` | both | Cap on the delay between retries. |

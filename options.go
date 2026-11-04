@@ -80,7 +80,8 @@ func WithMaxInterval(interval time.Duration) Option {
 }
 
 // WithMaxAttempts sets the total number of attempts, including the first. Zero means one for
-// a flow and ten for a step. Use UnlimitedAttempts to keep retrying.
+// a flow and ten for a step. Use UnlimitedAttempts to keep retrying. Any other negative
+// number makes RunFlow, StartFlow or RunStep return an error.
 func WithMaxAttempts(attempts int32) Option {
 	apply := func(config *CommonConfig) {
 		config.MaxAttempts = attempts
