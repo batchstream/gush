@@ -161,13 +161,21 @@ func (flowCtx *FlowContext) RunFlow(request FlowRequest, options ...FlowOption) 
 }
 
 // StartFlow starts a child flow and returns its ID once it has started, without waiting for
-// it to finish. The child keeps running after this flow ends. It inherits this flow's
-// priority, fair key and log attributes unless options override them.
+// it to finish. The child is independent: it keeps running when this flow ends or is
+// canceled, and CancelFlow stops it by that ID. It inherits this flow's priority, fair key
+// and log attributes unless options override them. Like RunFlow, it returns a canceled error
+// once its own context is canceled.
 func (flowCtx *FlowContext) StartFlow(request FlowRequest, options ...FlowOption) (string, error) {
+	err := flowCtx.Context.Err()
+	if err != nil {
+		return "", err
+	}
 	config := flowCtx.childFlowConfig(options)
 
+	// Canceling a context also cancels the children started on it.
+	detached, _ := workflow.NewDisconnectedContext(flowCtx.Context)
 	childOptions := newDetachedChildWorkflowOptions(request.Queue, config)
-	childContext := workflow.WithChildOptions(flowCtx.Context, childOptions)
+	childContext := workflow.WithChildOptions(detached, childOptions)
 	future, err := executeChildFlow(childContext, request, config)
 	if err != nil {
 		return "", flowCtx.Abort(err)
@@ -176,7 +184,7 @@ func (flowCtx *FlowContext) StartFlow(request FlowRequest, options ...FlowOption
 	var execution workflow.Execution
 	err = future.GetChildWorkflowExecution().Get(childContext, &execution)
 	if err != nil {
-		return "", err
+		return "", unwrapError(err)
 	}
 	return execution.ID, nil
 }
