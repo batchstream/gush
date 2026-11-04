@@ -22,6 +22,7 @@ func TestValidateWorkers(t *testing.T) {
 		wantErr string
 	}{
 		{name: "no workers", workers: nil, wantErr: "at least one worker"},
+		{name: "nil worker", workers: []*Worker{nil}, wantErr: "nil worker"},
 		{name: "nothing registered", workers: []*Worker{NewWorker("q")}, wantErr: "no flows or steps"},
 		{name: "repeated step", workers: []*Worker{NewWorker("q").WithSteps(serveTestStep, serveTestStep)}, wantErr: "repeated step name"},
 		{name: "repeated flow", workers: []*Worker{NewWorker("q").WithFlows(serveTestFlow, serveTestFlow)}, wantErr: "repeated flow name"},

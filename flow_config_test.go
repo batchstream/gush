@@ -383,3 +383,22 @@ func TestWithConfigOverridesWhatItSets(t *testing.T) {
 		t.Errorf("scheduling = %q, %q", inherited.Priority, inherited.FairKey)
 	}
 }
+
+func TestJSONConfigDecodesOverExistingSettings(t *testing.T) {
+	config := gush.DefaultFlowConfig()
+	config.ID = "kept"
+	config.MaxAttempts = 5
+	config.Priority = gush.PriorityHigh
+
+	err := gush.Decode([]byte(`{"cron":"0 2 * * *"}`), config)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	if config.Cron != "0 2 * * *" {
+		t.Errorf("cron = %q", config.Cron)
+	}
+	if config.ID != "kept" || config.MaxAttempts != 5 || config.Priority != gush.PriorityHigh {
+		t.Errorf("existing settings changed: %q, %d, %q", config.ID, config.MaxAttempts, config.Priority)
+	}
+}

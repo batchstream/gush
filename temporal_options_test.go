@@ -161,3 +161,16 @@ func TestTotalBackoff(t *testing.T) {
 		})
 	}
 }
+
+func TestWithWaitForCancelReachesTemporal(t *testing.T) {
+	config := DefaultStepConfig()
+	if newActivityOptions(config).WaitForCancellation {
+		t.Error("steps wait for cancellation by default")
+	}
+
+	config.Apply(WithWaitForCancel())
+
+	if !newActivityOptions(config).WaitForCancellation {
+		t.Error("WithWaitForCancel did not reach the activity options")
+	}
+}

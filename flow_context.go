@@ -15,7 +15,9 @@ const abortedFlowErrorType = "FlowAborted"
 const DefaultFlowVersion = int(workflow.DefaultVersion)
 
 // FlowContext is what a flow receives. It is a workflow.Context, so Temporal SDK functions
-// such as workflow.Sleep accept it.
+// such as workflow.Sleep accept it. The exception is workflow.WithCancel, which panics on a
+// context type it does not know, directly or through a parent. So pass ctx.Context to
+// workflow.WithCancel and to workflow.Go, whose goroutine may call it.
 //
 // Temporal replays a flow's code to restore it, so flow code must be deterministic: no
 // I/O, no time.Now and no time.Sleep. Do real work in steps. Logs written during a replay
@@ -85,7 +87,7 @@ func NewFlowContext(ctx workflow.Context, logAttributes map[string]any) *FlowCon
 // different one needs this, such as a goroutine started with workflow.Go or cleanup on a
 // workflow.NewDisconnectedContext.
 //
-//	workflow.Go(ctx, func(g workflow.Context) {
+//	workflow.Go(ctx.Context, func(g workflow.Context) {
 //	    err := ctx.WithContext(g).RunStep(Process, item, nil)
 //	    ...
 //	})
@@ -206,7 +208,8 @@ func (flowCtx *FlowContext) ContinueAsNew(input any) error {
 		return flowCtx.Abort(err)
 	}
 	flowName := workflow.GetInfo(flowCtx.Context).WorkflowType.Name
-	return workflow.NewContinueAsNewError(flowCtx.Context, flowName, payload, flowCtx.LogAttributes)
+	nextRun := workflow.WithWorkflowVersioningIntent(flowCtx.Context, defaultCommandVersioningIntent())
+	return workflow.NewContinueAsNewError(nextRun, flowName, payload, flowCtx.LogAttributes)
 }
 
 // Decode deserializes the flow's Input into target, aborting the flow if it cannot.

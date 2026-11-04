@@ -84,9 +84,9 @@ func runWithTemporal(m *testing.M) int {
 		WithFlows(Double, FailingFlow, ParentOfFailingFlow, FailingStepFlow, PlainFailureFlow, AbortFlow, ApprovalFlow,
 			ExpiringApprovalFlow, TimeoutFlow, HeartbeatFlow, SilentFlow, ReplayFlow, AttributesFlow, AttributesChildFlow,
 			WaitingFlow, InheritanceFlow, VersionFlow, SmallFlow, BadStepFlow, ChildOnOwnQueueFlow, WrappedAbortFlow,
-			WrappingFlow, ParallelFlow, CleanupFlow, CountdownFlow, AttributeEchoFlow).
+			WrappingFlow, ParallelFlow, CleanupFlow, CountdownFlow, AttributeEchoFlow, CancelOneStepFlow, ChargeThenRefundFlow).
 		WithSteps(DoubleStep, FailingStep, PlainFailureStep, AbortStep, ApprovalStep, SlowStep, HeartbeatStep, SilentStep,
-			PurgeCacheStep, AttributesStep, InheritanceStep, WrappedAbortStep, DecliningStep, CleanupStep, AttributeEchoStep).
+			PurgeCacheStep, AttributesStep, InheritanceStep, WrappedAbortStep, DecliningStep, CleanupStep, AttributeEchoStep, ChargingStep, RefundStep).
 		WithContext(serveContext)
 
 	served := make(chan error, 1)
@@ -1012,7 +1012,7 @@ func ParallelFlow(ctx *gush.FlowContext) (any, error) {
 	group := workflow.NewWaitGroup(ctx)
 	for i := range 3 {
 		group.Add(1)
-		workflow.Go(ctx, func(g workflow.Context) {
+		workflow.Go(ctx.Context, func(g workflow.Context) {
 			defer group.Done()
 
 			input := order{ID: "parallel", Amount: i + 1}
@@ -1052,7 +1052,7 @@ func CleanupFlow(ctx *gush.FlowContext) (any, error) {
 		return nil, fmt.Errorf("a step on the canceled context returned %w", refused)
 	}
 
-	disconnected, _ := workflow.NewDisconnectedContext(ctx)
+	disconnected, _ := workflow.NewDisconnectedContext(ctx.Context)
 	return nil, ctx.WithContext(disconnected).RunStep(CleanupStep, ctx.Input, nil)
 }
 
@@ -1124,4 +1124,104 @@ func TestLargeNumericAttributesSurviveEveryHop(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, userID, output)
+}
+
+func CancelOneStepFlow(ctx *gush.FlowContext) (any, error) {
+	var stepErr error
+	group := workflow.NewWaitGroup(ctx)
+	group.Add(1)
+	workflow.Go(ctx.Context, func(g workflow.Context) {
+		defer group.Done()
+
+		canceled, cancel := workflow.WithCancel(g)
+		cancel()
+		stepErr = ctx.WithContext(canceled).RunStep(DoubleStep, nil, nil)
+	})
+	group.Wait(ctx)
+
+	if !temporal.IsCanceledError(stepErr) {
+		return nil, fmt.Errorf("the step returned %v", stepErr)
+	}
+	return "canceled", nil
+}
+
+func TestOneParallelStepCanBeCanceledOnItsOwn(t *testing.T) {
+	var output string
+
+	err := testClient.RunFlow(testContext(t), flowRequest(CancelOneStepFlow, nil, &output))
+
+	require.NoError(t, err)
+	assert.Equal(t, "canceled", output)
+}
+
+func ChargingStep(ctx *gush.StepContext) (any, error) {
+	key := string(ctx.Input)
+	attemptsOf(key + "-started").Add(1)
+
+	for ctx.Err() == nil {
+		ctx.Heartbeat()
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// The step takes a moment to wind down, and cleanup must not overlap it.
+	time.Sleep(300 * time.Millisecond)
+	attemptsOf(key + "-charged").Add(1)
+	return nil, ctx.Err()
+}
+
+func RefundStep(ctx *gush.StepContext) (any, error) {
+	key := string(ctx.Input)
+	attemptsOf(key + "-seen").Store(attemptsOf(key + "-charged").Load())
+	return nil, nil
+}
+
+func ChargeThenRefundFlow(ctx *gush.FlowContext) (any, error) {
+	err := ctx.RunStep(ChargingStep, ctx.Input, nil,
+		gush.WithWaitForCancel(),
+		gush.WithHeartbeatTimeout(time.Second),
+		gush.WithMaxAttempts(1),
+	)
+	if !temporal.IsCanceledError(err) {
+		return nil, fmt.Errorf("the charge returned %v", err)
+	}
+
+	disconnected, _ := workflow.NewDisconnectedContext(ctx.Context)
+	return nil, ctx.WithContext(disconnected).RunStep(RefundStep, ctx.Input, nil)
+}
+
+func TestWaitForCancelHoldsCleanupUntilTheStepEnds(t *testing.T) {
+	ctx := testContext(t)
+	key := uniqueKey(t)
+
+	err := testClient.RunFlow(ctx, flowRequest(ChargeThenRefundFlow, key, nil), gush.WithAsync(), gush.WithID(key))
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return attemptsOf(key+"-started").Load() == 1
+	}, 10*time.Second, 20*time.Millisecond)
+	require.NoError(t, testClient.CancelFlow(ctx, key))
+
+	require.Eventually(t, func() bool {
+		flow, err := testClient.GetFlow(ctx, key)
+		return err == nil && flow.Status == "Completed"
+	}, 15*time.Second, 100*time.Millisecond)
+	assert.EqualValues(t, 1, attemptsOf(key+"-seen").Load(), "the refund started before the charge ended")
+}
+
+func TestResumeKeepsAWrappedErrorsType(t *testing.T) {
+	ctx := testContext(t)
+	key := uniqueKey(t)
+
+	result := make(chan error, 1)
+	go func() { result <- testClient.RunFlow(ctx, flowRequest(ApprovalFlow, key, nil)) }()
+
+	token := <-resumeTokens
+	rejected := gush.NewPermanentError("rejected by reviewer", "Rejected", nil)
+	wrapped := fmt.Errorf("reviewer said no: %w", rejected)
+	require.NoError(t, testClient.Resume(ctx, token, nil, wrapped))
+
+	err := <-result
+	require.Error(t, err)
+	assert.True(t, gush.IsPermanentError(err))
+	assert.Equal(t, "[Rejected] reviewer said no: rejected by reviewer", err.Error())
 }

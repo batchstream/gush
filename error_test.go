@@ -224,3 +224,18 @@ func TestTemporalErrorLeavesOtherErrorsAlone(t *testing.T) {
 		t.Error("an ApplicationError changed")
 	}
 }
+
+func TestWrappedErrorKeepsItsDetailsOnTheCause(t *testing.T) {
+	permanent := NewPermanentError("m", "T", nil, "the-detail")
+
+	result := temporalError(fmt.Errorf("wrap: %w", permanent))
+
+	cause, ok := errors.Unwrap(result).(*ApplicationError)
+	if !ok {
+		t.Fatalf("cause = %T", errors.Unwrap(result))
+	}
+	var detail string
+	if err := cause.Details(&detail); err != nil || detail != "the-detail" {
+		t.Errorf("detail = %q, error = %v", detail, err)
+	}
+}

@@ -73,7 +73,7 @@ func (c *Client) Resume(ctx context.Context, resumeToken string, result any, ste
 	if err != nil {
 		return err
 	}
-	return c.temporalClient.CompleteActivity(ctx, token, payload, stepErr)
+	return c.temporalClient.CompleteActivity(ctx, token, payload, temporalError(stepErr))
 }
 
 // IsResumeTokenError reports whether Resume failed because its token is invalid or the

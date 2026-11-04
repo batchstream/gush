@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"maps"
+	"reflect"
 	"slices"
 	"time"
 )
@@ -12,6 +13,9 @@ import (
 // be queued and applied later with WithConfig. A field left out of the JSON keeps its
 // default, while a zero written out is taken as it is, so "maximum_attempts": 0 still
 // means unlimited.
+//
+// Like time.Time, it decodes itself from JSON, so a struct that embeds it would decode
+// through that method and lose its own fields. Hold it in a named field to decode it.
 type FlowConfig struct {
 	CommonConfig
 
@@ -44,13 +48,17 @@ func DefaultFlowConfig() *FlowConfig {
 	return config
 }
 
-// UnmarshalJSON starts from DefaultFlowConfig, because an attempt count left out of the JSON
-// would otherwise read as zero, which means unlimited retries. Priority stays empty unless
-// the JSON sets it, so that WithConfig keeps what a child flow inherits.
+// UnmarshalJSON starts an empty config from DefaultFlowConfig, because an attempt count left
+// out of the JSON would otherwise read as zero, which means unlimited retries. Priority
+// stays empty unless the JSON sets it, so that WithConfig keeps what a child flow inherits.
+// A config that already holds settings keeps those the JSON leaves out.
 func (config *FlowConfig) UnmarshalJSON(data []byte) error {
 	type plainFlowConfig FlowConfig
-	decoded := plainFlowConfig(*DefaultFlowConfig())
-	decoded.Priority = ""
+	decoded := plainFlowConfig(*config)
+	if reflect.ValueOf(*config).IsZero() {
+		decoded = plainFlowConfig(*DefaultFlowConfig())
+		decoded.Priority = ""
+	}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
@@ -104,8 +112,8 @@ func WithConfig(config *FlowConfig) FlowOption {
 }
 
 // WithID sets the flow ID. Set one to refer to the flow later, because a generated ID is
-// not returned. While a flow with this ID is running, RunFlow joins it instead of starting
-// another, and this run's input is ignored.
+// not returned. While a flow with this ID is running, a client's RunFlow joins it instead of
+// starting another and ignores this run's input, and a child flow gets an error.
 func WithID(flowID string) FlowOption {
 	apply := func(config *FlowConfig) {
 		config.ID = flowID

@@ -89,9 +89,9 @@ func (c *Client) RunFlow(ctx context.Context, request FlowRequest, options ...Fl
 }
 
 // CancelFlow asks a flow to stop. Its children and steps are canceled too, so a RunStep in
-// progress returns a canceled error. Cleanup steps need a disconnected context; see
-// FlowContext.WithContext. A step that is already running only finds out when it calls
-// Heartbeat with WithHeartbeatTimeout set.
+// progress returns a canceled error, or waits first with WithWaitForCancel. Cleanup steps
+// need a disconnected context; see FlowContext.WithContext. A step that is already running
+// only finds out when it calls Heartbeat, and WithHeartbeatTimeout makes that prompt.
 func (c *Client) CancelFlow(ctx context.Context, flowID string) error {
 	return c.temporalClient.CancelWorkflow(ctx, flowID, "")
 }

@@ -9,8 +9,8 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
-// defaultCommandVersioningIntent routes new commands by assignment rules, so a step or
-// child flow does not inherit the Build ID of a parent whose workers have been retired.
+// defaultCommandVersioningIntent routes new commands by assignment rules, so a step, child
+// flow or continued run does not inherit a Build ID whose workers have been retired.
 //
 //lint:ignore SA1019 Temporal deprecated this intent, but it still prevents tasks being pinned to a retired Build ID while workers run unversioned.
 func defaultCommandVersioningIntent() temporal.VersioningIntent {
@@ -62,6 +62,7 @@ func newActivityOptions(config *StepConfig) workflow.ActivityOptions {
 		RetryPolicy:         config.temporalPolicy(),
 		Priority:            newTemporalPriority(&config.CommonConfig),
 		VersioningIntent:    defaultCommandVersioningIntent(),
+		WaitForCancellation: config.WaitForCancel,
 	}
 
 	if config.PickupTimeout > 0 {

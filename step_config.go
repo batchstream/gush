@@ -19,6 +19,9 @@ type StepConfig struct {
 
 	// PickupTimeout fails the step if no worker picks it up in time. Zero means unlimited.
 	PickupTimeout time.Duration `json:"worker_pickup_timeout"`
+
+	// WaitForCancel makes RunStep wait for a canceled step to end. See WithWaitForCancel.
+	WaitForCancel bool `json:"wait_for_cancel"`
 }
 
 // DefaultStepConfig returns the settings a step run starts from: ten attempts of up to
@@ -52,6 +55,17 @@ func (option stepOption) applyStep(config *StepConfig) {
 func WithQueue(queue string) StepOption {
 	apply := func(config *StepConfig) {
 		config.Queue = queue
+	}
+	return stepOption(apply)
+}
+
+// WithWaitForCancel makes RunStep wait for a running step to end when the flow is canceled.
+// Otherwise it returns a canceled error at once while the step carries on, so cleanup could
+// overlap the step's work. The step ends sooner if it heartbeats and returns on ctx.Done(),
+// and if it finishes anyway, RunStep returns its result.
+func WithWaitForCancel() StepOption {
+	apply := func(config *StepConfig) {
+		config.WaitForCancel = true
 	}
 	return stepOption(apply)
 }

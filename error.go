@@ -63,7 +63,8 @@ func (e *programError) Unwrap() error {
 // temporalError returns the error a flow or step hands back to Temporal, which only reads
 // the type and retryability of an ApplicationError it is given directly. Anything else
 // would be recorded as an untyped, retryable error, so an ApplicationError found inside a
-// wrapped error is passed on as one that keeps the wrapper's message.
+// wrapped error is passed on as one that keeps the wrapper's message. Its details stay on
+// the wrapped error, which is that one's cause.
 func temporalError(err error) error {
 	programErr, ok := err.(*programError)
 	if ok {

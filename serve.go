@@ -24,9 +24,12 @@ func (c *Client) Serve(workers ...*Worker) error {
 		return err
 	}
 
-	// Serve hands the signals back when it returns, so the host's own handling resumes.
-	stopping, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	// Serve holds the signals until it returns, so workers still draining after another
+	// one fails are not killed by a signal, and then the host's own handling resumes.
+	signaled, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	stopping, stopWorkers := context.WithCancel(signaled)
+	defer stopWorkers()
 
 	errs := make([]error, len(workers))
 
@@ -36,7 +39,7 @@ func (c *Client) Serve(workers ...*Worker) error {
 			err := c.runWorker(w, stopping.Done())
 			if err != nil {
 				errs[i] = fmt.Errorf("gush: worker on queue %q: %w", w.Queue, err)
-				stop()
+				stopWorkers()
 			}
 		})
 	}
@@ -52,6 +55,9 @@ func validateWorkers(workers []*Worker) error {
 	}
 
 	for _, w := range workers {
+		if w == nil {
+			return errors.New("gush: Serve got a nil worker")
+		}
 		if len(w.Steps) == 0 && len(w.Flows) == 0 {
 			return fmt.Errorf("gush: worker on queue %q has no flows or steps", w.Queue)
 		}
