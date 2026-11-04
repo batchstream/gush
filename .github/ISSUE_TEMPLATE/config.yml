@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/batchstream/gush#readme
+    about: Usage guide for this repository.
+  - name: Temporal documentation
+    url: https://docs.temporal.io
+    about: How the Temporal server behaves underneath Gush.
+  - name: Security vulnerability
+    url: https://github.com/batchstream/gush/security/advisories/new
+    about: Report a vulnerability privately.

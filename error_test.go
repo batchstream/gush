@@ -1,0 +1,241 @@
+package gush
+
+import (
+	"errors"
+	"fmt"
+	"testing"
+)
+
+func TestUnwrapError(t *testing.T) {
+	t.Run("nil error", func(t *testing.T) {
+		got := unwrapError(nil)
+		if got != nil {
+			t.Errorf("unwrapError(nil) = %v, want nil", got)
+		}
+	})
+
+	t.Run("plain error returns itself", func(t *testing.T) {
+		err := errors.New("simple error")
+		got := unwrapError(err)
+		if got.Error() != "simple error" {
+			t.Errorf("unwrapError = %q, want %q", got.Error(), "simple error")
+		}
+	})
+
+	t.Run("wrapped error returns root cause", func(t *testing.T) {
+		root := errors.New("root cause")
+		wrapped := fmt.Errorf("activity error (type: RunJob, scheduledEventID: 5): %w", root)
+		got := unwrapError(wrapped)
+		if got.Error() != "root cause" {
+			t.Errorf("unwrapError = %q, want %q", got.Error(), "root cause")
+		}
+	})
+
+	t.Run("deeply wrapped error returns root cause", func(t *testing.T) {
+		root := errors.New("actual program error")
+		mid := fmt.Errorf("exit status 1: %w", root)
+		outer := fmt.Errorf("activity error (type: RunJob, scheduledEventID: 5, startedEventID: 6): %w", mid)
+		got := unwrapError(outer)
+		if got.Error() != "actual program error" {
+			t.Errorf("unwrapError = %q, want %q", got.Error(), "actual program error")
+		}
+	})
+
+	t.Run("ApplicationError includes message and type", func(t *testing.T) {
+		appErr := NewApplicationError("db connection failed", "DBError")
+		got := unwrapError(appErr)
+		want := "[DBError] db connection failed"
+		if got.Error() != want {
+			t.Errorf("unwrapError = %q, want %q", got.Error(), want)
+		}
+	})
+
+	t.Run("wrapped ApplicationError includes message and type", func(t *testing.T) {
+		appErr := NewApplicationError("db connection failed", "DBError")
+		wrapped := fmt.Errorf("activity error: %w", appErr)
+		got := unwrapError(wrapped)
+		want := "[DBError] db connection failed"
+		if got.Error() != want {
+			t.Errorf("unwrapError = %q, want %q", got.Error(), want)
+		}
+	})
+
+	t.Run("NonRetryableApplicationError includes message and type", func(t *testing.T) {
+		cause := errors.New("connection refused")
+		appErr := NewPermanentError("db connection failed", "DBError", cause)
+		wrapped := fmt.Errorf("activity error (type: RunJob, scheduledEventID: 5): %w", appErr)
+		got := unwrapError(wrapped)
+		want := "[DBError] db connection failed"
+		if got.Error() != want {
+			t.Errorf("unwrapError = %q, want %q", got.Error(), want)
+		}
+	})
+
+	t.Run("ApplicationError with empty type omits type suffix", func(t *testing.T) {
+		appErr := NewApplicationError("something broke", "")
+		got := unwrapError(appErr)
+		if got.Error() != "something broke" {
+			t.Errorf("unwrapError = %q, want %q", got.Error(), "something broke")
+		}
+	})
+}
+
+func TestUnwrapErrorKeepsApplicationError(t *testing.T) {
+	t.Run("non-retryable error stays detectable", func(t *testing.T) {
+		cause := errors.New("boom")
+		appErr := NewPermanentError("boom", "StepAborted", cause)
+		wrapped := fmt.Errorf("activity error (type: RunJob, scheduledEventID: 5): %w", appErr)
+		got := unwrapError(wrapped)
+		if got.Error() != "[StepAborted] boom" {
+			t.Errorf("unwrapError = %q, want %q", got.Error(), "[StepAborted] boom")
+		}
+		if !IsApplicationError(got) {
+			t.Error("IsApplicationError = false, want true")
+		}
+		if !IsPermanentError(got) {
+			t.Error("IsPermanentError = false, want true")
+		}
+		var target *ApplicationError
+		if !errors.As(got, &target) || target.Type() != "StepAborted" {
+			t.Errorf("errors.As found %v, want type StepAborted", target)
+		}
+		if !errors.Is(got, cause) {
+			t.Error("errors.Is(cause) = false, want true")
+		}
+	})
+
+	t.Run("retryable error stays retryable", func(t *testing.T) {
+		appErr := NewApplicationError("db connection failed", "DBError")
+		got := unwrapError(appErr)
+		if !IsApplicationError(got) {
+			t.Error("IsApplicationError = false, want true")
+		}
+		if IsPermanentError(got) {
+			t.Error("IsPermanentError = true, want false")
+		}
+	})
+
+	t.Run("unwrapping twice keeps the same message", func(t *testing.T) {
+		appErr := NewApplicationError("db connection failed", "DBError")
+		got := unwrapError(unwrapError(appErr))
+		if got.Error() != "[DBError] db connection failed" {
+			t.Errorf("unwrapError = %q, want %q", got.Error(), "[DBError] db connection failed")
+		}
+	})
+}
+
+func TestTemporalError(t *testing.T) {
+	t.Run("nil stays nil", func(t *testing.T) {
+		if got := temporalError(nil); got != nil {
+			t.Errorf("temporalError(nil) = %v, want nil", got)
+		}
+	})
+
+	t.Run("unwrapped error returns its ApplicationError", func(t *testing.T) {
+		appErr := NewPermanentError("boom", "StepAborted", nil)
+		got := temporalError(unwrapError(appErr))
+		if got != error(appErr) {
+			t.Errorf("temporalError = %#v, want the original ApplicationError", got)
+		}
+	})
+
+	t.Run("other errors are unchanged", func(t *testing.T) {
+		plain := errors.New("plain")
+		if got := temporalError(plain); got != plain {
+			t.Errorf("temporalError = %v, want %v", got, plain)
+		}
+	})
+}
+
+func TestTemporalErrorKeepsAWrappedErrorsTypeAndRetryability(t *testing.T) {
+	permanent := NewPermanentError("card declined", "Declined", nil)
+	retryable := NewApplicationError("try later", "Busy")
+
+	tests := []struct {
+		name         string
+		err          error
+		message      string
+		errType      string
+		nonRetryable bool
+	}{
+		{
+			name:         "wrapped permanent error",
+			err:          fmt.Errorf("charge order: %w", permanent),
+			message:      "charge order: card declined",
+			errType:      "Declined",
+			nonRetryable: true,
+		},
+		{
+			name:         "wrapped error from another step",
+			err:          fmt.Errorf("fulfill: %w", unwrapError(permanent)),
+			message:      "fulfill: card declined",
+			errType:      "Declined",
+			nonRetryable: true,
+		},
+		{
+			name:    "wrapped retryable error",
+			err:     fmt.Errorf("charge order: %w", retryable),
+			message: "charge order: try later",
+			errType: "Busy",
+		},
+		{
+			name:         "wrapped twice",
+			err:          fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", permanent)),
+			message:      "outer: inner: card declined",
+			errType:      "Declined",
+			nonRetryable: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := temporalError(tt.err)
+
+			applicationError, ok := result.(*ApplicationError)
+			if !ok {
+				t.Fatalf("temporalError() = %T, want *ApplicationError", result)
+			}
+			if applicationError.Message() != tt.message {
+				t.Errorf("message = %q, want %q", applicationError.Message(), tt.message)
+			}
+			if applicationError.Type() != tt.errType {
+				t.Errorf("type = %q, want %q", applicationError.Type(), tt.errType)
+			}
+			if applicationError.NonRetryable() != tt.nonRetryable {
+				t.Errorf("non-retryable = %v, want %v", applicationError.NonRetryable(), tt.nonRetryable)
+			}
+		})
+	}
+}
+
+func TestTemporalErrorLeavesOtherErrorsAlone(t *testing.T) {
+	plain := errors.New("plain")
+	if temporalError(plain) != plain {
+		t.Error("a plain error changed")
+	}
+
+	wrappedPlain := fmt.Errorf("outer: %w", plain)
+	if temporalError(wrappedPlain) != wrappedPlain {
+		t.Error("a wrapped plain error changed")
+	}
+
+	var application error = NewApplicationError("boom", "Declined")
+	if temporalError(application) != application {
+		t.Error("an ApplicationError changed")
+	}
+}
+
+func TestWrappedErrorKeepsItsDetailsOnTheCause(t *testing.T) {
+	permanent := NewPermanentError("m", "T", nil, "the-detail")
+
+	result := temporalError(fmt.Errorf("wrap: %w", permanent))
+
+	cause, ok := errors.Unwrap(result).(*ApplicationError)
+	if !ok {
+		t.Fatalf("cause = %T", errors.Unwrap(result))
+	}
+	var detail string
+	if err := cause.Details(&detail); err != nil || detail != "the-detail" {
+		t.Errorf("detail = %q, error = %v", detail, err)
+	}
+}
