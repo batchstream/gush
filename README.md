@@ -104,8 +104,6 @@ request := gush.FlowRequest{Flow: Notify, Input: receipt}
 err := ctx.RunFlow(request)
 ```
 
-`WithCron("0 2 * * *")` runs a flow on a schedule in UTC until it is canceled, terminated or stopped by `WithTimeout`. Start it with `StartFlow`, because `RunFlow` returns an error: a schedule has no result to wait for. A client's `StartFlow` returns an error for an invalid expression. On a child flow, Temporal instead fails the parent's workflow task, which retries until the parent's `WithTimeout`, so check an expression that comes from outside first.
-
 Flows and steps are registered under their bare Go function names, and can be called by that name as a string. Two functions with the same name in different packages collide, and `Serve` reports it. Use `NewFlowHandler` and `NewStepHandler` to choose a name, which closures and the instantiations of a generic function need too.
 
 `string` and `[]byte` travel as raw bytes and everything else as JSON, so read a value back as the type it was written.
@@ -156,10 +154,9 @@ A step that is already running only finds out about the cancellation through `ct
 | `WithFairKey(key)` | both | Group to schedule fairly against, such as a tenant. |
 | `WithLogAttribute(k, v)` | both | Attribute on every log line of this run and its children. |
 | `WithLogAttributes(m)` | both | The same, for several attributes. |
-| `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's input, and a child flow gets an error. `RunFlow` then waits for that flow, even across a `WithCron` schedule. |
-| `WithTimeout(d)` | flow | Limit on the whole execution, including every retry and every scheduled run. |
-| `WithCron(expr)` | flow | Schedule in UTC. Use with `StartFlow`. |
-| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Fields left out of the JSON keep their defaults. Whoever applies it chooses `RunFlow` or `StartFlow`, and one with a cron schedule needs `StartFlow`. |
+| `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's input, and a child flow gets an error. |
+| `WithTimeout(d)` | flow | Limit on the whole execution, including every retry. |
+| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Fields left out of the JSON keep their defaults. Whoever applies it chooses `RunFlow` or `StartFlow`. |
 | `WithQueue(q)` | step | Runs on another queue. |
 | `WithAttemptTimeout(d)` | step | Limit on each attempt, not the step as a whole. |
 | `WithHeartbeatTimeout(d)` | step | Fails an attempt that stops calling `ctx.Heartbeat()`. |

@@ -133,13 +133,9 @@ func (flowCtx *FlowContext) RunStep(step any, input, output any, options ...Step
 }
 
 // RunFlow runs a child flow and waits for its result. The child inherits this flow's
-// priority, fair key and log attributes unless options override them. A WithCron schedule
-// never gives a result to wait for, so RunFlow aborts the flow; start one with StartFlow.
+// priority, fair key and log attributes unless options override them.
 func (flowCtx *FlowContext) RunFlow(request FlowRequest, options ...FlowOption) error {
 	config := flowCtx.childFlowConfig(options)
-	if config.Cron != "" {
-		return flowCtx.Abort(errCronNeedsStartFlow)
-	}
 
 	childOptions := newChildWorkflowOptions(request.Queue, config)
 	childContext := workflow.WithChildOptions(flowCtx.Context, childOptions)

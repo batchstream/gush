@@ -13,7 +13,7 @@ import (
 // be queued and applied later with WithConfig. A field left out of the JSON keeps its
 // default, while a zero written out is taken as it is, so "maximum_attempts": 0 still
 // means unlimited. Waiting is not part of a config: whoever applies it chooses RunFlow or
-// StartFlow, and one with a Cron needs StartFlow.
+// StartFlow.
 //
 // Like time.Time, it decodes itself from JSON, so a struct that embeds it would decode
 // through that method and lose its own fields. Hold it in a named field to decode it.
@@ -23,14 +23,8 @@ type FlowConfig struct {
 	// ID is the flow ID. If empty, one is generated.
 	ID string `json:"id"`
 
-	// Timeout limits the whole execution, including every retry and every scheduled run.
-	// Zero means unlimited.
+	// Timeout limits the whole execution, including every retry. Zero means unlimited.
 	Timeout time.Duration `json:"timeout"`
-
-	// Cron is a schedule in UTC, such as "0 2 * * *" for daily at 2 AM. A run starts only
-	// after the previous one ends, and the schedule continues until canceled, terminated
-	// or stopped by Timeout.
-	Cron string `json:"cron"`
 }
 
 // DefaultFlowConfig returns the settings a flow run starts from: one attempt, medium
@@ -111,8 +105,7 @@ func WithConfig(config *FlowConfig) FlowOption {
 
 // WithID sets the flow ID. Without it one is generated, which StartFlow returns. While a
 // flow with this ID is running, a client's RunFlow or StartFlow joins it instead of starting
-// another and ignores this run's input, and a child flow gets an error. RunFlow then waits
-// for that flow, even across a WithCron schedule.
+// another and ignores this run's input, and a child flow gets an error.
 func WithID(flowID string) FlowOption {
 	apply := func(config *FlowConfig) {
 		config.ID = flowID
@@ -120,24 +113,10 @@ func WithID(flowID string) FlowOption {
 	return flowOption(apply)
 }
 
-// WithTimeout limits the whole flow execution, including every retry and every scheduled
-// run of a WithCron schedule, so it also ends the schedule.
+// WithTimeout limits the whole flow execution, including every retry.
 func WithTimeout(timeout time.Duration) FlowOption {
 	apply := func(config *FlowConfig) {
 		config.Timeout = timeout
-	}
-	return flowOption(apply)
-}
-
-// WithCron runs the flow on a schedule in UTC, such as "0 2 * * *" for daily at 2 AM. Start
-// it with StartFlow, because RunFlow returns an error: a schedule has no result to wait for.
-//
-// A client's StartFlow returns an error for an invalid expression. On a child flow, Temporal
-// instead fails the parent's workflow task, which retries until the parent's WithTimeout, so
-// check an expression that comes from outside first.
-func WithCron(cron string) FlowOption {
-	apply := func(config *FlowConfig) {
-		config.Cron = cron
 	}
 	return flowOption(apply)
 }

@@ -12,7 +12,6 @@ func TestFlowConfigMarshalUsesSnakeCaseJSONTags(t *testing.T) {
 	config := gush.DefaultFlowConfig()
 	config.ID = "flow-123"
 	config.Timeout = 5 * time.Minute
-	config.Cron = "0 2 * * *"
 	config.Priority = gush.PriorityHigh
 	config.FairKey = "tenant-a"
 	config.InitialInterval = 2 * time.Second
@@ -36,7 +35,6 @@ func TestFlowConfigMarshalUsesSnakeCaseJSONTags(t *testing.T) {
 	expectedKeys := []string{
 		"id",
 		"timeout",
-		"cron",
 		"priority",
 		"fairness",
 		"initial_interval",

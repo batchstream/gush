@@ -2,15 +2,10 @@ package gush
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"go.temporal.io/sdk/client"
 )
-
-// errCronNeedsStartFlow is what RunFlow returns for a schedule, which never gives it a
-// result to wait for.
-var errCronNeedsStartFlow = errors.New("gush: a cron schedule has no result for RunFlow to wait for; use StartFlow")
 
 // FlowHandlerFunc is the signature of a flow.
 type FlowHandlerFunc func(ctx *FlowContext) (output any, err error)
@@ -64,14 +59,10 @@ type FlowInfo struct {
 	CloseTime *time.Time // nil while running
 }
 
-// RunFlow starts a flow and waits for its result. It returns an error for a WithCron
-// schedule, which never gives a result to wait for, so start one with StartFlow.
+// RunFlow starts a flow and waits for its result.
 func (c *Client) RunFlow(ctx context.Context, request FlowRequest, options ...FlowOption) error {
 	config := DefaultFlowConfig()
 	config.Apply(options...)
-	if config.Cron != "" {
-		return errCronNeedsStartFlow
-	}
 
 	run, err := c.startFlow(ctx, request, config)
 	if err != nil {

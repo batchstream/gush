@@ -20,9 +20,6 @@ func TestDefaultFlowConfig(t *testing.T) {
 	if config.ID != "" {
 		t.Errorf("Expected ID to be empty, got %v", config.ID)
 	}
-	if config.Cron != "" {
-		t.Errorf("Expected Cron to be empty, got %v", config.Cron)
-	}
 
 	// Test LogAttributes initialization
 	if config.LogAttributes == nil {
@@ -82,13 +79,6 @@ func TestFlowOptions(t *testing.T) {
 			},
 		},
 		{
-			name:   "WithCron",
-			option: gush.WithCron("0 2 * * *"),
-			expected: func(c *gush.FlowConfig) bool {
-				return c.Cron == "0 2 * * *"
-			},
-		},
-		{
 			name:   "WithRetryPolicy",
 			option: gush.WithRetryPolicy(retryPolicy),
 			expected: func(c *gush.FlowConfig) bool {
@@ -119,7 +109,6 @@ func TestMultipleFlowOptions(t *testing.T) {
 		gush.WithID("batch-process-123"),
 		gush.WithTimeout(10 * time.Minute),
 		gush.WithPriority(gush.PriorityLow),
-		gush.WithCron("0 3 * * *"),
 		gush.WithLogAttribute("user_id", "batch-user"),
 		gush.WithLogAttribute("process_type", "batch"),
 	}
@@ -137,9 +126,6 @@ func TestMultipleFlowOptions(t *testing.T) {
 	}
 	if config.Priority != gush.PriorityLow {
 		t.Errorf("Expected Priority to be PriorityLow, got %v", config.Priority)
-	}
-	if config.Cron != "0 3 * * *" {
-		t.Errorf("Expected Cron to be '0 3 * * *', got %v", config.Cron)
 	}
 	if config.LogAttributes["user_id"] != "batch-user" {
 		t.Errorf("Expected LogAttributes[user_id] to be 'batch-user', got %v", config.LogAttributes["user_id"])
@@ -183,7 +169,6 @@ func TestWithConfigAllowsLaterOverrides(t *testing.T) {
 		},
 		ID:      "config-flow-id",
 		Timeout: 15 * time.Minute,
-		Cron:    "0 4 * * *",
 	}
 
 	options := []gush.FlowOption{
@@ -202,9 +187,6 @@ func TestWithConfigAllowsLaterOverrides(t *testing.T) {
 	}
 	if config.Timeout != 20*time.Minute {
 		t.Errorf("Expected Timeout to be overridden, got %v", config.Timeout)
-	}
-	if config.Cron != "0 4 * * *" {
-		t.Errorf("Expected Cron to come from custom config, got %v", config.Cron)
 	}
 	if config.Priority != gush.PriorityHigh {
 		t.Errorf("Expected Priority to come from custom config, got %v", config.Priority)
@@ -247,26 +229,6 @@ func TestFlowConfigRetryPolicyInheritance(t *testing.T) {
 	}
 	if config.MaxAttempts != 1 {
 		t.Errorf("Expected MaxAttempts to be 1, got %v", config.MaxAttempts)
-	}
-}
-
-func TestCronScheduleValidation(t *testing.T) {
-	validCronSchedules := []string{
-		"0 2 * * *",   // Daily at 2 AM
-		"0 */6 * * *", // Every 6 hours
-		"0 9 * * 1",   // Every Monday at 9 AM
-		"30 14 * * *", // Daily at 2:30 PM
-		"0 0 1 * *",   // First day of every month
-	}
-
-	for _, cron := range validCronSchedules {
-		t.Run("ValidCron_"+cron, func(t *testing.T) {
-			config := gush.DefaultFlowConfig()
-			config.Apply(gush.WithCron(cron))
-			if config.Cron != cron {
-				t.Errorf("Expected Cron to be %s, got %s", cron, config.Cron)
-			}
-		})
 	}
 }
 
@@ -372,13 +334,13 @@ func TestJSONConfigDecodesOverExistingSettings(t *testing.T) {
 	config.MaxAttempts = 5
 	config.Priority = gush.PriorityHigh
 
-	err := gush.Decode([]byte(`{"cron":"0 2 * * *"}`), config)
+	err := gush.Decode([]byte(`{"timeout":60000000000}`), config)
 	if err != nil {
 		t.Fatalf("Decode() error = %v", err)
 	}
 
-	if config.Cron != "0 2 * * *" {
-		t.Errorf("cron = %q", config.Cron)
+	if config.Timeout != time.Minute {
+		t.Errorf("timeout = %v", config.Timeout)
 	}
 	if config.ID != "kept" || config.MaxAttempts != 5 || config.Priority != gush.PriorityHigh {
 		t.Errorf("existing settings changed: %q, %d, %q", config.ID, config.MaxAttempts, config.Priority)
