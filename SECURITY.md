@@ -21,5 +21,6 @@ vulnerabilities even if you cannot reproduce them on the latest release.
   stores them in its history. Do not put secrets in them.
 - Resume tokens let their holder finish a suspended step. Treat them as credentials
   when handing them to another system.
-- An `http://` value in `OTEL_EXPORTER_OTLP_ENDPOINT` sends logs in plaintext. Use an
-  `https://` URL when logs leave a trusted network.
+- With no certificate variable set, an `http://` value in `OTEL_EXPORTER_OTLP_ENDPOINT`
+  or `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` sends logs in plaintext. Use an `https://` URL
+  when logs leave a trusted network.

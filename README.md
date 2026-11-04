@@ -286,6 +286,8 @@ OTEL_EXPORTER_OTLP_ENDPOINT=https://collector:4317
 OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 ```
 
+The endpoint must be a URL, or `Dial` returns an error. `https://` is TLS and `http://` is plaintext, and `OTEL_EXPORTER_OTLP_INSECURE` does not change that. Give the port too, because leaving it out does not select OTLP's 4317 or 4318. Over HTTP, `/v1/logs` is added to `OTEL_EXPORTER_OTLP_ENDPOINT`, but `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` is used as written, so it needs the full path, such as `http://collector:4318/v1/logs`.
+
 An application with its own logging pipeline keeps control: a provider set with OpenTelemetry's `global.SetLoggerProvider` always wins, and Gush uses it instead of starting an export. Importing Gush never changes that global. With no provider and no endpoint, logs go to standard error, as do the Temporal SDK's own messages unless `Options.Logger` says otherwise.
 
 ## Workers
