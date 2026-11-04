@@ -107,9 +107,42 @@ request := gush.FlowRequest{Flow: Notify, Input: receipt}
 err := ctx.RunFlow(request)
 ```
 
-`WithCron("0 2 * * *")` runs a flow on a schedule in UTC until it is canceled or terminated.
+`WithCron("0 2 * * *")` runs a flow on a schedule in UTC until it is canceled, terminated or stopped by `WithTimeout`. Add `WithAsync`, because `RunFlow` otherwise waits across every run.
 
-Flows and steps are registered under their bare Go function names, and can be called by that name as a string. Two functions with the same name in different packages collide, and `Serve` reports it. Use `NewFlowHandler` and `NewStepHandler` to choose a name, which closures need too.
+Flows and steps are registered under their bare Go function names, and can be called by that name as a string. Two functions with the same name in different packages collide, and `Serve` reports it. Use `NewFlowHandler` and `NewStepHandler` to choose a name, which closures and the instantiations of a generic function need too.
+
+`string` and `[]byte` travel as raw bytes and everything else as JSON, so read a value back as the type it was written.
+
+### Parallel steps and cleanup
+
+`RunStep` and `RunFlow` run on the context their `FlowContext` holds. Code on another `workflow.Context` gets a matching `FlowContext` from `WithContext`, as a goroutine does:
+
+```go
+group := workflow.NewWaitGroup(ctx)
+for _, item := range items {
+    group.Add(1)
+    workflow.Go(ctx, func(g workflow.Context) {
+        defer group.Done()
+        err := ctx.WithContext(g).RunStep(Process, item, nil)
+        if err != nil {
+            ctx.Printf("process %s: %v", item, err)
+        }
+    })
+}
+group.Wait(ctx)
+```
+
+After `CancelFlow`, anything on the flow's own context returns a canceled error. Cleanup needs a context that ignores the cancellation:
+
+```go
+err := ctx.RunStep(Charge, order, &receipt)
+if temporal.IsCanceledError(err) {
+    disconnected, _ := workflow.NewDisconnectedContext(ctx)
+    return nil, ctx.WithContext(disconnected).RunStep(Refund, order, nil)
+}
+```
+
+A step that is already running only finds out about the cancellation through `ctx.Heartbeat()`, so one that should stop early needs `WithHeartbeatTimeout` and regular heartbeats.
 
 ### Options
 
@@ -126,11 +159,11 @@ Flows and steps are registered under their bare Go function names, and can be ca
 | `WithFairKey(key)` | both | Group to schedule fairly against, such as a tenant. |
 | `WithLogAttribute(k, v)` | both | Attribute on every log line of this run and its children. |
 | `WithLogAttributes(m)` | both | The same, for several attributes. |
-| `WithID(id)` | flow | Flow ID, otherwise generated. |
-| `WithTimeout(d)` | flow | Limit on the whole execution, including every retry. |
-| `WithCron(expr)` | flow | Schedule in UTC. |
+| `WithID(id)` | flow | Flow ID. Otherwise one is generated and not returned, so set one to refer to the flow later. A flow already running with this ID is joined, and this run's input is ignored. |
+| `WithTimeout(d)` | flow | Limit on the whole execution, including every retry and every scheduled run. |
+| `WithCron(expr)` | flow | Schedule in UTC. Use with `WithAsync`. |
 | `WithAsync()` | flow | Returns once started. An async child outlives its parent. |
-| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. |
+| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Fields left out of the JSON keep their defaults. |
 | `WithQueue(q)` | step | Runs on another queue. |
 | `WithAttemptTimeout(d)` | step | Limit on each attempt, not the step as a whole. |
 | `WithHeartbeatTimeout(d)` | step | Fails an attempt that stops calling `ctx.Heartbeat()`. |
@@ -159,7 +192,7 @@ err := ctx.RunStep(Charge, order, &receipt, gush.WithNoRetry("Declined"))
 
 `WithNoRetry` matches the type of a `gush.NewApplicationError`. Pass `gush.StepTimeoutErrorType` to stop retrying steps that timed out.
 
-Errors from `RunFlow` and `RunStep` work with `errors.As`, `gush.IsApplicationError`, `gush.IsPermanentError` and `gush.IsPanicError`.
+Errors from `RunFlow` and `RunStep` work with `errors.As`, `gush.IsApplicationError`, `gush.IsPermanentError` and `gush.IsPanicError`. Wrapping one with `fmt.Errorf` and `%w` keeps its type and retryability.
 
 ## Priority and fairness
 
@@ -200,6 +233,8 @@ err = client.Resume(ctx, resumeToken, decision, nil)
 
 **Set `WithAttemptTimeout` to the longest acceptable wait.** The step's timeout keeps running while it is suspended, and when it expires the step retries and runs its code again, sending a second request. The default is 2 minutes and 10 attempts. Use `WithMaxAttempts(1)` unless running the code twice is safe.
 
+An error passed to `Resume` counts as a failed attempt, so a plain error runs the code again too. To reject for good, pass `gush.NewPermanentError("rejected", "Rejected", nil)`.
+
 ## Changing running flows
 
 Flows can run for a long time, and a replay must take the same path it took originally. `Version` keeps old executions on the old code.
@@ -211,6 +246,19 @@ if v == gush.DefaultFlowVersion {
 } else {
     err = ctx.RunStep(NewCharge, input, &output)
 }
+```
+
+`Version` accepts every recorded version, so once an old branch is deleted, an execution that recorded it runs the newer one. To make such an execution fail instead, call the SDK's `workflow.GetVersion` with a higher minimum.
+
+## Long-running flows
+
+A flow's history grows with every step, and Temporal limits its size. A flow that loops for a long time ends the run and starts again with an empty history, keeping its flow ID and log attributes:
+
+```go
+if batch.Done {
+    return summary, nil
+}
+return nil, ctx.ContinueAsNew(batch.Next)
 ```
 
 ## Logging
@@ -233,7 +281,7 @@ Each record carries `flow_id`, the source `file` and `line`, and the attributes 
 err := client.RunFlow(ctx, request, gush.WithLogAttribute("tenant", "acme"))
 ```
 
-Lines written while Temporal replays a flow are dropped, so each appears once. Helpers that only have a `context.Context` can log with the step's context through `gush.AsStepContext(ctx).Printf(...)`.
+Lines written while Temporal replays a flow are dropped, so each appears once. Helpers that only have a `context.Context`, even one derived with `context.WithTimeout`, can log with the step's context through `gush.AsStepContext(ctx).Printf(...)`.
 
 ### Export over OTLP
 
@@ -242,11 +290,11 @@ Lines written while Temporal replays a flow are dropped, so each appears once. H
 | Variable | Protocol |
 |---|---|
 | `OTEL_ENDPOINT` | OTLP/gRPC. A bare `host:port` is plaintext; a URL's scheme chooses, and `https://` means TLS. |
-| `TRACING_HTTP_ENDPOINT` | Legacy alias of `OTEL_HTTP_ENDPOINT`. |
 | `OTEL_HTTP_ENDPOINT` | OTLP/HTTP, as an `http://` or `https://` URL. Logs go to `/v1/logs`. |
+| `TRACING_HTTP_ENDPOINT` | Deprecated alias of `OTEL_HTTP_ENDPOINT`. |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT` | The [standard OpenTelemetry variables](https://opentelemetry.io/docs/specs/otel/protocol/exporter/), with their protocol, header and TLS settings. |
 
-An application with its own logging pipeline keeps control: a provider set with OpenTelemetry's `global.SetLoggerProvider` always wins, and Gush uses it instead of starting an export. Importing Gush never changes that global. With no provider and no endpoint, logs go to standard error.
+An application with its own logging pipeline keeps control: a provider set with OpenTelemetry's `global.SetLoggerProvider` always wins, and Gush uses it instead of starting an export. Importing Gush never changes that global. With no provider and no endpoint, logs go to standard error, as do the Temporal SDK's own messages unless `Options.Logger` says otherwise.
 
 ## Workers
 
