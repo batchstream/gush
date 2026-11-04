@@ -17,11 +17,11 @@ Two trade-offs come with that:
 - Inputs and outputs are `any`, so the compiler does not check that a flow and its step agree on a type.
 - Temporal sees compressed bytes, so its Web UI and CLI cannot show inputs and outputs as text.
 
-The SDK stays within reach: a `FlowContext` is a `workflow.Context`, so functions like `workflow.Sleep` accept it. `workflow.Go` and `workflow.WithCancel` need `ctx.Context`, the SDK's own context inside it.
+The SDK stays within reach: `ctx.Context` in a flow is the SDK's own `workflow.Context`, for functions like `workflow.Sleep`.
 
 ## Install
 
-Requires Go 1.27.3.
+Requires Go 1.27. Build with its latest patch release, which has the security fixes.
 
 ```sh
 go get github.com/batchstream/gush
@@ -86,28 +86,25 @@ Temporal replays flow code to restore it, so flows must be deterministic: no I/O
 
 ## Running flows
 
-`RunFlow` waits for the result. `WithAsync` returns once the flow has started.
+`RunFlow` waits for the result. `StartFlow` returns the flow's ID once it has started.
 
 ```go
 request := gush.FlowRequest{Queue: "orders", Flow: Fulfill, Input: order}
-err := client.RunFlow(ctx, request,
-    gush.WithID("order-1"),
-    gush.WithAsync(),
-)
+flowID, err := client.StartFlow(ctx, request)
 
-flow, err := client.GetFlow(ctx, "order-1") // flow.Status: Running, Completed, Failed, ...
-err = client.CancelFlow(ctx, "order-1")     // lets the flow clean up
-err = client.TerminateFlow(ctx, "order-1", "reason") // stops it immediately
+flow, err := client.GetFlow(ctx, flowID) // flow.Status: Running, Completed, Failed, ...
+err = client.CancelFlow(ctx, flowID)     // lets the flow clean up
+err = client.TerminateFlow(ctx, flowID, "reason") // stops it immediately
 ```
 
-A flow starts a child the same way. A child with no queue runs on its parent's.
+A flow starts a child the same way. A child with no queue runs on its parent's. One begun with `StartFlow` is independent: it keeps running when its parent ends or is canceled, and `CancelFlow` stops it by the returned ID.
 
 ```go
 request := gush.FlowRequest{Flow: Notify, Input: receipt}
 err := ctx.RunFlow(request)
 ```
 
-`WithCron("0 2 * * *")` runs a flow on a schedule in UTC until it is canceled, terminated or stopped by `WithTimeout`. Add `WithAsync`, because `RunFlow` otherwise waits across every run.
+`WithCron("0 2 * * *")` runs a flow on a schedule in UTC until it is canceled, terminated or stopped by `WithTimeout`. Start it with `StartFlow`, because `RunFlow` returns an error: a schedule has no result to wait for. A client's `StartFlow` returns an error for an invalid expression. On a child flow, Temporal instead fails the parent's workflow task, which retries until the parent's `WithTimeout`, so check an expression that comes from outside first.
 
 Flows and steps are registered under their bare Go function names, and can be called by that name as a string. Two functions with the same name in different packages collide, and `Serve` reports it. Use `NewFlowHandler` and `NewStepHandler` to choose a name, which closures and the instantiations of a generic function need too.
 
@@ -115,10 +112,10 @@ Flows and steps are registered under their bare Go function names, and can be ca
 
 ### Parallel steps and cleanup
 
-`RunStep` and `RunFlow` run on the context their `FlowContext` holds. Code on another `workflow.Context` gets a matching `FlowContext` from `WithContext`, as a goroutine does:
+`RunStep` and `RunFlow` run on the context their `FlowContext` holds, and `StartFlow` only checks that it is not canceled. Code on another `workflow.Context` gets a matching `FlowContext` from `WithContext`, as a goroutine does:
 
 ```go
-group := workflow.NewWaitGroup(ctx)
+group := workflow.NewWaitGroup(ctx.Context)
 for _, item := range items {
     group.Add(1)
     workflow.Go(ctx.Context, func(g workflow.Context) {
@@ -129,7 +126,7 @@ for _, item := range items {
         }
     })
 }
-group.Wait(ctx)
+group.Wait(ctx.Context)
 ```
 
 After `CancelFlow`, anything on the flow's own context returns a canceled error. Cleanup needs a context that ignores the cancellation, and `WithWaitForCancel` so it starts after the step has ended rather than alongside it:
@@ -159,11 +156,10 @@ A step that is already running only finds out about the cancellation through `ct
 | `WithFairKey(key)` | both | Group to schedule fairly against, such as a tenant. |
 | `WithLogAttribute(k, v)` | both | Attribute on every log line of this run and its children. |
 | `WithLogAttributes(m)` | both | The same, for several attributes. |
-| `WithID(id)` | flow | Flow ID. Otherwise one is generated and not returned, so set one to refer to the flow later. A client's `RunFlow` joins a flow already running with this ID and ignores this run's input, and a child flow gets an error. |
+| `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's input, and a child flow gets an error. `RunFlow` then waits for that flow, even across a `WithCron` schedule. |
 | `WithTimeout(d)` | flow | Limit on the whole execution, including every retry and every scheduled run. |
-| `WithCron(expr)` | flow | Schedule in UTC. Use with `WithAsync`. |
-| `WithAsync()` | flow | Returns once started. An async child outlives its parent. |
-| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Fields left out of the JSON keep their defaults. |
+| `WithCron(expr)` | flow | Schedule in UTC. Use with `StartFlow`. |
+| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Fields left out of the JSON keep their defaults. Whoever applies it chooses `RunFlow` or `StartFlow`, and one with a cron schedule needs `StartFlow`. |
 | `WithQueue(q)` | step | Runs on another queue. |
 | `WithAttemptTimeout(d)` | step | Limit on each attempt, not the step as a whole. |
 | `WithHeartbeatTimeout(d)` | step | Fails an attempt that stops calling `ctx.Heartbeat()`. |
@@ -193,7 +189,7 @@ err := ctx.RunStep(Charge, order, &receipt, gush.WithNoRetry("Declined"))
 
 `WithNoRetry` matches the type of a `gush.NewApplicationError`. Pass `gush.StepTimeoutErrorType` to stop retrying steps that timed out.
 
-Errors from `RunFlow` and `RunStep` work with `errors.As`, `gush.IsApplicationError`, `gush.IsPermanentError` and `gush.IsPanicError`. Wrapping one with `fmt.Errorf` and `%w` keeps its type and retryability.
+Errors from `RunFlow` and `RunStep` work with `errors.As`, `gush.IsApplicationError`, `gush.IsPermanentError` and `gush.IsPanicError`. Wrapping one with `fmt.Errorf` and `%w` keeps its type and retryability. Its details stay on the original error, so `errors.As` can find an outer error without them. Call `errors.Unwrap` on that one until `Details` succeeds.
 
 ## Priority and fairness
 

@@ -12,14 +12,15 @@ import (
 // FlowConfig holds the settings of one flow run. Its JSON form is stable, so a config can
 // be queued and applied later with WithConfig. A field left out of the JSON keeps its
 // default, while a zero written out is taken as it is, so "maximum_attempts": 0 still
-// means unlimited.
+// means unlimited. Waiting is not part of a config: whoever applies it chooses RunFlow or
+// StartFlow, and one with a Cron needs StartFlow.
 //
 // Like time.Time, it decodes itself from JSON, so a struct that embeds it would decode
 // through that method and lose its own fields. Hold it in a named field to decode it.
 type FlowConfig struct {
 	CommonConfig
 
-	// ID is the flow ID. If empty, the server generates one.
+	// ID is the flow ID. If empty, one is generated.
 	ID string `json:"id"`
 
 	// Timeout limits the whole execution, including every retry and every scheduled run.
@@ -30,9 +31,6 @@ type FlowConfig struct {
 	// after the previous one ends, and the schedule continues until canceled, terminated
 	// or stopped by Timeout.
 	Cron string `json:"cron"`
-
-	// Async makes RunFlow return as soon as the flow has started.
-	Async bool `json:"async"`
 }
 
 // DefaultFlowConfig returns the settings a flow run starts from: one attempt, medium
@@ -111,9 +109,10 @@ func WithConfig(config *FlowConfig) FlowOption {
 	return flowOption(apply)
 }
 
-// WithID sets the flow ID. Set one to refer to the flow later, because a generated ID is
-// not returned. While a flow with this ID is running, a client's RunFlow joins it instead of
-// starting another and ignores this run's input, and a child flow gets an error.
+// WithID sets the flow ID. Without it one is generated, which StartFlow returns. While a
+// flow with this ID is running, a client's RunFlow or StartFlow joins it instead of starting
+// another and ignores this run's input, and a child flow gets an error. RunFlow then waits
+// for that flow, even across a WithCron schedule.
 func WithID(flowID string) FlowOption {
 	apply := func(config *FlowConfig) {
 		config.ID = flowID
@@ -130,20 +129,15 @@ func WithTimeout(timeout time.Duration) FlowOption {
 	return flowOption(apply)
 }
 
-// WithCron runs the flow on a schedule in UTC, such as "0 2 * * *" for daily at 2 AM. Add
-// WithAsync, because RunFlow otherwise waits across every run of the schedule.
+// WithCron runs the flow on a schedule in UTC, such as "0 2 * * *" for daily at 2 AM. Start
+// it with StartFlow, because RunFlow returns an error: a schedule has no result to wait for.
+//
+// A client's StartFlow returns an error for an invalid expression. On a child flow, Temporal
+// instead fails the parent's workflow task, which retries until the parent's WithTimeout, so
+// check an expression that comes from outside first.
 func WithCron(cron string) FlowOption {
 	apply := func(config *FlowConfig) {
 		config.Cron = cron
-	}
-	return flowOption(apply)
-}
-
-// WithAsync makes RunFlow return as soon as the flow has started. A child flow started
-// this way also outlives its parent.
-func WithAsync() FlowOption {
-	apply := func(config *FlowConfig) {
-		config.Async = true
 	}
 	return flowOption(apply)
 }

@@ -23,9 +23,6 @@ func TestDefaultFlowConfig(t *testing.T) {
 	if config.Cron != "" {
 		t.Errorf("Expected Cron to be empty, got %v", config.Cron)
 	}
-	if config.Async {
-		t.Errorf("Expected Async to be false, got %v", config.Async)
-	}
 
 	// Test LogAttributes initialization
 	if config.LogAttributes == nil {
@@ -85,13 +82,6 @@ func TestFlowOptions(t *testing.T) {
 			},
 		},
 		{
-			name:   "RunFlowWithWaitResult",
-			option: gush.WithAsync(),
-			expected: func(c *gush.FlowConfig) bool {
-				return c.Async
-			},
-		},
-		{
 			name:   "WithCron",
 			option: gush.WithCron("0 2 * * *"),
 			expected: func(c *gush.FlowConfig) bool {
@@ -129,7 +119,6 @@ func TestMultipleFlowOptions(t *testing.T) {
 		gush.WithID("batch-process-123"),
 		gush.WithTimeout(10 * time.Minute),
 		gush.WithPriority(gush.PriorityLow),
-		gush.WithAsync(),
 		gush.WithCron("0 3 * * *"),
 		gush.WithLogAttribute("user_id", "batch-user"),
 		gush.WithLogAttribute("process_type", "batch"),
@@ -148,9 +137,6 @@ func TestMultipleFlowOptions(t *testing.T) {
 	}
 	if config.Priority != gush.PriorityLow {
 		t.Errorf("Expected Priority to be PriorityLow, got %v", config.Priority)
-	}
-	if !config.Async {
-		t.Errorf("Expected Async to be true, got %v", config.Async)
 	}
 	if config.Cron != "0 3 * * *" {
 		t.Errorf("Expected Cron to be '0 3 * * *', got %v", config.Cron)
@@ -198,7 +184,6 @@ func TestWithConfigAllowsLaterOverrides(t *testing.T) {
 		ID:      "config-flow-id",
 		Timeout: 15 * time.Minute,
 		Cron:    "0 4 * * *",
-		Async:   true,
 	}
 
 	options := []gush.FlowOption{
@@ -223,9 +208,6 @@ func TestWithConfigAllowsLaterOverrides(t *testing.T) {
 	}
 	if config.Priority != gush.PriorityHigh {
 		t.Errorf("Expected Priority to come from custom config, got %v", config.Priority)
-	}
-	if !config.Async {
-		t.Errorf("Expected Async to come from custom config, got %v", config.Async)
 	}
 	if config.LogAttributes["source"] != "config" {
 		t.Errorf("Expected LogAttributes[source] to come from custom config, got %v", config.LogAttributes["source"])

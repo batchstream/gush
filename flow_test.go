@@ -6,7 +6,18 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"go.temporal.io/sdk/workflow"
 )
+
+// SDK functions such as workflow.WithCancel panic on a context type they do not know, so
+// passing a FlowContext to one has to stay a compile error.
+func TestFlowContextIsNotAWorkflowContext(t *testing.T) {
+	contextType := reflect.TypeFor[workflow.Context]()
+	if reflect.TypeFor[*FlowContext]().Implements(contextType) {
+		t.Errorf("FlowContext implements workflow.Context")
+	}
+}
 
 func TestRunFlowSendsNoRetryTypesToTemporal(t *testing.T) {
 	capture := &startCaptureClient{}
@@ -21,6 +32,41 @@ func TestRunFlowSendsNoRetryTypesToTemporal(t *testing.T) {
 	got := capture.options.RetryPolicy.NonRetryableErrorTypes
 	if !reflect.DeepEqual(got, []string{"Declined"}) {
 		t.Fatalf("non-retryable types = %v", got)
+	}
+}
+
+func TestRunFlowRejectsACronSchedule(t *testing.T) {
+	config := DefaultFlowConfig()
+	config.Cron = "0 2 * * *"
+	tests := map[string]FlowOption{
+		"WithCron":   WithCron("0 2 * * *"),
+		"WithConfig": WithConfig(config),
+	}
+
+	for name, option := range tests {
+		t.Run(name, func(t *testing.T) {
+			capture := &startCaptureClient{}
+			flowClient := &Client{temporalClient: capture}
+
+			request := FlowRequest{Queue: "queue", Flow: "handler"}
+			err := flowClient.RunFlow(context.Background(), request, option)
+			if !errors.Is(err, errCronNeedsStartFlow) {
+				t.Fatalf("RunFlow() error = %v", err)
+			}
+			if capture.options.TaskQueue != "" {
+				t.Errorf("RunFlow() started a flow on %q", capture.options.TaskQueue)
+			}
+		})
+	}
+}
+
+func TestStartFlowRejectsAFlowThatCannotRun(t *testing.T) {
+	flowClient := &Client{temporalClient: &startCaptureClient{}}
+
+	request := FlowRequest{Queue: "queue", Flow: 123}
+	_, err := flowClient.StartFlow(context.Background(), request)
+	if err == nil || !strings.Contains(err.Error(), "flow") {
+		t.Fatalf("StartFlow() error = %v", err)
 	}
 }
 

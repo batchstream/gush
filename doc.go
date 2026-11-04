@@ -20,6 +20,6 @@
 //	    return receipt, err
 //	}
 //
-// FlowContext and StepContext implement the Temporal SDK's workflow.Context and the
-// standard context.Context, so SDK functions such as workflow.Sleep accept them.
+// A StepContext is a standard context.Context. A FlowContext holds the Temporal SDK's
+// workflow.Context in its Context field, for SDK functions such as workflow.Sleep.
 package gush

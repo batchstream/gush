@@ -48,6 +48,15 @@ func RunFlow(ctx context.Context, request FlowRequest, options ...FlowOption) er
 	return c.RunFlow(ctx, request, options...)
 }
 
+// StartFlow calls StartFlow on the default client.
+func StartFlow(ctx context.Context, request FlowRequest, options ...FlowOption) (string, error) {
+	c, err := DefaultClient()
+	if err != nil {
+		return "", err
+	}
+	return c.StartFlow(ctx, request, options...)
+}
+
 // CancelFlow calls CancelFlow on the default client.
 func CancelFlow(ctx context.Context, flowID string) error {
 	c, err := DefaultClient()

@@ -14,10 +14,8 @@ const abortedFlowErrorType = "FlowAborted"
 // it guards.
 const DefaultFlowVersion = int(workflow.DefaultVersion)
 
-// FlowContext is what a flow receives. It is a workflow.Context, so Temporal SDK functions
-// such as workflow.Sleep accept it. The exception is workflow.WithCancel, which panics on a
-// context type it does not know, directly or through a parent. So pass ctx.Context to
-// workflow.WithCancel and to workflow.Go, whose goroutine may call it.
+// FlowContext is what a flow receives. Its Context field is the Temporal SDK's own context,
+// for SDK functions such as workflow.Sleep(ctx.Context, d).
 //
 // Temporal replays a flow's code to restore it, so flow code must be deterministic: no
 // I/O, no time.Now and no time.Sleep. Do real work in steps. Logs written during a replay
@@ -41,7 +39,9 @@ const DefaultFlowVersion = int(workflow.DefaultVersion)
 //	    return receipt, err
 //	}
 type FlowContext struct {
-	workflow.Context
+	// Context is the Temporal workflow context that RunStep and RunFlow run on.
+	Context workflow.Context
+
 	FlowInfo
 	*Logger
 
@@ -85,7 +85,8 @@ func NewFlowContext(ctx workflow.Context, logAttributes map[string]any) *FlowCon
 // WithContext returns a copy of this FlowContext that runs its steps and child flows on ctx.
 // RunStep and RunFlow always use the FlowContext's own workflow.Context, so code holding a
 // different one needs this, such as a goroutine started with workflow.Go or cleanup on a
-// workflow.NewDisconnectedContext.
+// workflow.NewDisconnectedContext. StartFlow only checks that context for cancellation,
+// because its child is independent.
 //
 //	workflow.Go(ctx.Context, func(g workflow.Context) {
 //	    err := ctx.WithContext(g).RunStep(Process, item, nil)
@@ -131,30 +132,20 @@ func (flowCtx *FlowContext) RunStep(step any, input, output any, options ...Step
 	return nil
 }
 
-// RunFlow runs a child flow and waits for its result, unless WithAsync is set. The child
-// inherits this flow's priority, fair key and log attributes unless options override them.
+// RunFlow runs a child flow and waits for its result. The child inherits this flow's
+// priority, fair key and log attributes unless options override them. A WithCron schedule
+// never gives a result to wait for, so RunFlow aborts the flow; start one with StartFlow.
 func (flowCtx *FlowContext) RunFlow(request FlowRequest, options ...FlowOption) error {
-	config := DefaultFlowConfig()
-	config.Priority = flowCtx.Priority
-	config.FairKey = flowCtx.FairKey
-	maps.Copy(config.LogAttributes, flowCtx.LogAttributes)
-	config.Apply(options...)
-
-	flowName, err := handlerName("flow", request.Flow)
-	if err != nil {
-		return flowCtx.Abort(err)
-	}
-	payload, err := EncodePayload(request.Input)
-	if err != nil {
-		return flowCtx.Abort(err)
+	config := flowCtx.childFlowConfig(options)
+	if config.Cron != "" {
+		return flowCtx.Abort(errCronNeedsStartFlow)
 	}
 
 	childOptions := newChildWorkflowOptions(request.Queue, config)
 	childContext := workflow.WithChildOptions(flowCtx.Context, childOptions)
-	future := workflow.ExecuteChildWorkflow(childContext, flowName, payload, config.LogAttributes)
-
-	if config.Async {
-		return future.GetChildWorkflowExecution().Get(childContext, nil)
+	future, err := executeChildFlow(childContext, request, config)
+	if err != nil {
+		return flowCtx.Abort(err)
 	}
 
 	var result []byte
@@ -168,6 +159,56 @@ func (flowCtx *FlowContext) RunFlow(request FlowRequest, options ...FlowOption) 
 		return flowCtx.Abort(err)
 	}
 	return nil
+}
+
+// StartFlow starts a child flow and returns its ID once it has started, without waiting for
+// it to finish. The child is independent: it keeps running when this flow ends or is
+// canceled, and CancelFlow stops it by that ID. It inherits this flow's priority, fair key
+// and log attributes unless options override them. It returns a canceled error if its own
+// context is already canceled.
+func (flowCtx *FlowContext) StartFlow(request FlowRequest, options ...FlowOption) (string, error) {
+	err := flowCtx.Context.Err()
+	if err != nil {
+		return "", err
+	}
+	config := flowCtx.childFlowConfig(options)
+
+	// Canceling a context also cancels the children started on it.
+	detached, _ := workflow.NewDisconnectedContext(flowCtx.Context)
+	childOptions := newDetachedChildWorkflowOptions(request.Queue, config)
+	childContext := workflow.WithChildOptions(detached, childOptions)
+	future, err := executeChildFlow(childContext, request, config)
+	if err != nil {
+		return "", flowCtx.Abort(err)
+	}
+
+	var execution workflow.Execution
+	err = future.GetChildWorkflowExecution().Get(childContext, &execution)
+	if err != nil {
+		return "", unwrapError(err)
+	}
+	return execution.ID, nil
+}
+
+func (flowCtx *FlowContext) childFlowConfig(options []FlowOption) *FlowConfig {
+	config := DefaultFlowConfig()
+	config.Priority = flowCtx.Priority
+	config.FairKey = flowCtx.FairKey
+	maps.Copy(config.LogAttributes, flowCtx.LogAttributes)
+	config.Apply(options...)
+	return config
+}
+
+func executeChildFlow(ctx workflow.Context, request FlowRequest, config *FlowConfig) (workflow.ChildWorkflowFuture, error) {
+	flowName, err := handlerName("flow", request.Flow)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := EncodePayload(request.Input)
+	if err != nil {
+		return nil, err
+	}
+	return workflow.ExecuteChildWorkflow(ctx, flowName, payload, config.LogAttributes), nil
 }
 
 // Version lets flow code change without breaking executions already running the old code.

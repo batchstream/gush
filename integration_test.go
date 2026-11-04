@@ -84,9 +84,12 @@ func runWithTemporal(m *testing.M) int {
 		WithFlows(Double, FailingFlow, ParentOfFailingFlow, FailingStepFlow, PlainFailureFlow, AbortFlow, ApprovalFlow,
 			ExpiringApprovalFlow, TimeoutFlow, HeartbeatFlow, SilentFlow, ReplayFlow, AttributesFlow, AttributesChildFlow,
 			WaitingFlow, InheritanceFlow, VersionFlow, SmallFlow, BadStepFlow, ChildOnOwnQueueFlow, WrappedAbortFlow,
-			WrappingFlow, ParallelFlow, CleanupFlow, CountdownFlow, AttributeEchoFlow, CancelOneStepFlow, ChargeThenRefundFlow).
+			WrappingFlow, ParallelFlow, CleanupFlow, CountdownFlow, AttributeEchoFlow, CancelOneStepFlow, ChargeThenRefundFlow,
+			DetachingParentFlow, CronChildFlow, DetailReadingFlow, AttributeRecordingFlow, InheritingDetachingParentFlow,
+			CanceledDetachingFlow, HoldingEchoFlow, InvalidChildStartFlow, DuplicateChildStartFlow, CronChildStartFlow,
+			IdleFlow, IdleDetachingParentFlow, UnpolledChildStartFlow).
 		WithSteps(DoubleStep, FailingStep, PlainFailureStep, AbortStep, ApprovalStep, SlowStep, HeartbeatStep, SilentStep,
-			PurgeCacheStep, AttributesStep, InheritanceStep, WrappedAbortStep, DecliningStep, CleanupStep, AttributeEchoStep, ChargingStep, RefundStep).
+			PurgeCacheStep, AttributesStep, InheritanceStep, WrappedAbortStep, DecliningStep, CleanupStep, AttributeEchoStep, ChargingStep, RefundStep, DetailedStep).
 		WithContext(serveContext)
 
 	served := make(chan error, 1)
@@ -181,20 +184,20 @@ func TestNilPointerInputRunsAsEmpty(t *testing.T) {
 }
 
 func WaitingFlow(ctx *gush.FlowContext) (any, error) {
-	return nil, workflow.Sleep(ctx, 2*time.Second)
+	return nil, workflow.Sleep(ctx.Context, 2*time.Second)
 }
 
-func TestAsyncFlowReturnsBeforeItFinishes(t *testing.T) {
+func TestStartFlowReturnsBeforeItFinishes(t *testing.T) {
 	ctx := testContext(t)
 	flowID := uniqueKey(t)
 
-	err := testClient.RunFlow(ctx, flowRequest(WaitingFlow, nil, nil),
-		gush.WithAsync(),
+	startedID, err := testClient.StartFlow(ctx, flowRequest(WaitingFlow, nil, nil),
 		gush.WithID(flowID),
 		gush.WithPriority(gush.PriorityHigh),
 		gush.WithFairKey("tenant-a"),
 	)
 	require.NoError(t, err)
+	assert.Equal(t, flowID, startedID)
 
 	flow, err := testClient.GetFlow(ctx, flowID)
 	require.NoError(t, err)
@@ -681,8 +684,7 @@ func TestCronFlowRunsUntilStopped(t *testing.T) {
 	ctx := testContext(t)
 	flowID := uniqueKey(t)
 
-	err := testClient.RunFlow(ctx, flowRequest(SmallFlow, nil, nil),
-		gush.WithAsync(),
+	_, err := testClient.StartFlow(ctx, flowRequest(SmallFlow, nil, nil),
 		gush.WithID(flowID),
 		gush.WithCron("0 0 1 1 *"),
 	)
@@ -699,7 +701,7 @@ func TestCancelFlow(t *testing.T) {
 	ctx := testContext(t)
 	flowID := uniqueKey(t)
 
-	err := testClient.RunFlow(ctx, flowRequest(WaitingFlow, nil, nil), gush.WithAsync(), gush.WithID(flowID))
+	_, err := testClient.StartFlow(ctx, flowRequest(WaitingFlow, nil, nil), gush.WithID(flowID))
 	require.NoError(t, err)
 	require.NoError(t, testClient.CancelFlow(ctx, flowID))
 
@@ -713,7 +715,7 @@ func TestTerminateFlow(t *testing.T) {
 	ctx := testContext(t)
 	flowID := uniqueKey(t)
 
-	err := testClient.RunFlow(ctx, flowRequest(WaitingFlow, nil, nil), gush.WithAsync(), gush.WithID(flowID))
+	_, err := testClient.StartFlow(ctx, flowRequest(WaitingFlow, nil, nil), gush.WithID(flowID))
 	require.NoError(t, err)
 	require.NoError(t, testClient.TerminateFlow(ctx, flowID, "test"))
 
@@ -934,12 +936,13 @@ func TestPackageLevelFunctionsUseTheDefaultClient(t *testing.T) {
 	assert.Contains(t, stats, gush.QueueTypeStep)
 
 	waitingID := uniqueKey(t) + "-waiting"
-	err = gush.RunFlow(ctx, flowRequest(WaitingFlow, nil, nil), gush.WithAsync(), gush.WithID(waitingID))
+	startedID, err := gush.StartFlow(ctx, flowRequest(WaitingFlow, nil, nil), gush.WithID(waitingID))
 	require.NoError(t, err)
+	assert.Equal(t, waitingID, startedID)
 	require.NoError(t, gush.CancelFlow(ctx, waitingID))
 
 	terminatedID := uniqueKey(t) + "-terminated"
-	err = gush.RunFlow(ctx, flowRequest(WaitingFlow, nil, nil), gush.WithAsync(), gush.WithID(terminatedID))
+	_, err = gush.StartFlow(ctx, flowRequest(WaitingFlow, nil, nil), gush.WithID(terminatedID))
 	require.NoError(t, err)
 	require.NoError(t, gush.TerminateFlow(ctx, terminatedID, "test"))
 
@@ -1008,7 +1011,7 @@ func TestFlowWrappingAStepErrorKeepsItsType(t *testing.T) {
 
 func ParallelFlow(ctx *gush.FlowContext) (any, error) {
 	total := 0
-	group := workflow.NewWaitGroup(ctx)
+	group := workflow.NewWaitGroup(ctx.Context)
 	for i := range 3 {
 		group.Add(1)
 		workflow.Go(ctx.Context, func(g workflow.Context) {
@@ -1022,8 +1025,336 @@ func ParallelFlow(ctx *gush.FlowContext) (any, error) {
 			}
 		})
 	}
-	group.Wait(ctx)
+	group.Wait(ctx.Context)
 	return total, nil
+}
+
+func TestStartFlowReturnsAGeneratedID(t *testing.T) {
+	ctx := testContext(t)
+
+	flowID, err := testClient.StartFlow(ctx, flowRequest(WaitingFlow, nil, nil))
+	require.NoError(t, err)
+	require.NotEmpty(t, flowID)
+
+	flow, err := testClient.GetFlow(ctx, flowID)
+	require.NoError(t, err)
+	assert.Equal(t, flowID, flow.ID)
+}
+
+func DetachingParentFlow(ctx *gush.FlowContext) (any, error) {
+	request := gush.FlowRequest{Flow: WaitingFlow}
+	return ctx.StartFlow(request)
+}
+
+func DetailedStep(ctx *gush.StepContext) (any, error) {
+	permanent := gush.NewPermanentError("declined", "Declined", nil, "the-detail")
+	return nil, fmt.Errorf("charge: %w", permanent)
+}
+
+func DetailReadingFlow(ctx *gush.FlowContext) (any, error) {
+	stepErr := ctx.RunStep(DetailedStep, nil, nil)
+
+	var outer *gush.ApplicationError
+	if !errors.As(stepErr, &outer) {
+		return nil, fmt.Errorf("the step returned %v", stepErr)
+	}
+	var detail string
+	err := outer.Details(&detail)
+	if err == nil {
+		return nil, fmt.Errorf("the outer error has the detail %q", detail)
+	}
+
+	var original *gush.ApplicationError
+	if !errors.As(errors.Unwrap(outer), &original) {
+		return nil, fmt.Errorf("the outer error wraps %v", errors.Unwrap(outer))
+	}
+	err = original.Details(&detail)
+	return detail, err
+}
+
+func TestWrappedErrorKeepsItsDetailsOnTheOriginal(t *testing.T) {
+	ctx := testContext(t)
+
+	var detail string
+	err := testClient.RunFlow(ctx, flowRequest(DetailReadingFlow, nil, &detail))
+	require.NoError(t, err)
+	assert.Equal(t, "the-detail", detail)
+}
+
+func TestChildBegunWithStartFlowOutlivesItsParent(t *testing.T) {
+	ctx := testContext(t)
+
+	var childID string
+	err := testClient.RunFlow(ctx, flowRequest(DetachingParentFlow, nil, &childID))
+	require.NoError(t, err)
+	require.NotEmpty(t, childID)
+
+	completed := func() bool {
+		flow, err := testClient.GetFlow(ctx, childID)
+		return err == nil && flow.Status == "Completed"
+	}
+	assert.Eventually(t, completed, 15*time.Second, 200*time.Millisecond)
+}
+
+var detachedAttributes sync.Map
+
+func AttributeRecordingFlow(ctx *gush.FlowContext) (any, error) {
+	detachedAttributes.Store(ctx.ID, ctx.LogAttributes["tenant"])
+	return nil, nil
+}
+
+func InheritingDetachingParentFlow(ctx *gush.FlowContext) (any, error) {
+	request := gush.FlowRequest{Flow: AttributeRecordingFlow}
+	return ctx.StartFlow(request)
+}
+
+func TestChildBegunWithStartFlowInherits(t *testing.T) {
+	ctx := testContext(t)
+
+	var childID string
+	err := testClient.RunFlow(ctx, flowRequest(InheritingDetachingParentFlow, nil, &childID),
+		gush.WithPriority(gush.PriorityHigh),
+		gush.WithFairKey("tenant-a"),
+		gush.WithLogAttribute("tenant", "acme"),
+	)
+	require.NoError(t, err)
+
+	flow, err := testClient.GetFlow(ctx, childID)
+	require.NoError(t, err)
+	assert.Equal(t, gush.PriorityHigh, flow.Priority)
+	assert.Equal(t, "tenant-a", flow.FairKey)
+
+	recorded := func() bool {
+		tenant, ok := detachedAttributes.Load(childID)
+		return ok && tenant == "acme"
+	}
+	assert.Eventually(t, recorded, 15*time.Second, 200*time.Millisecond)
+}
+
+func CanceledDetachingFlow(ctx *gush.FlowContext) (any, error) {
+	var cleansUp bool
+	err := ctx.Decode(&cleansUp)
+	if err != nil {
+		return nil, err
+	}
+
+	request := gush.FlowRequest{Flow: WaitingFlow}
+	_, err = ctx.StartFlow(request, gush.WithID(ctx.ID+"-child"))
+	if err != nil {
+		return nil, err
+	}
+
+	err = workflow.Sleep(ctx.Context, time.Hour)
+	if !temporal.IsCanceledError(err) {
+		return nil, err
+	}
+	_, refused := ctx.StartFlow(request)
+	if !temporal.IsCanceledError(refused) {
+		return nil, fmt.Errorf("StartFlow on the canceled context returned %w", refused)
+	}
+	if !cleansUp {
+		return nil, err
+	}
+
+	disconnected, _ := workflow.NewDisconnectedContext(ctx.Context)
+	return nil, workflow.Sleep(disconnected, time.Second)
+}
+
+func TestCancelingAParentLeavesAStartedChildRunning(t *testing.T) {
+	tests := map[string]struct {
+		cleansUp     bool
+		parentStatus string
+	}{
+		"parent returns at once": {cleansUp: false, parentStatus: "Canceled"},
+		"parent cleans up first": {cleansUp: true, parentStatus: "Completed"},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			ctx := testContext(t)
+			flowID := uniqueKey(t)
+			childID := flowID + "-child"
+
+			_, err := testClient.StartFlow(ctx, flowRequest(CanceledDetachingFlow, test.cleansUp, nil), gush.WithID(flowID))
+			require.NoError(t, err)
+
+			reachesStatus := func(id, status string) func() bool {
+				return func() bool {
+					flow, err := testClient.GetFlow(ctx, id)
+					return err == nil && flow.Status == status
+				}
+			}
+			started := func() bool {
+				_, err := testClient.GetFlow(ctx, childID)
+				return err == nil
+			}
+			require.Eventually(t, started, 15*time.Second, 50*time.Millisecond)
+			require.NoError(t, testClient.CancelFlow(ctx, flowID))
+
+			assert.Eventually(t, reachesStatus(flowID, test.parentStatus), 15*time.Second, 200*time.Millisecond)
+			assert.Eventually(t, reachesStatus(childID, "Completed"), 15*time.Second, 200*time.Millisecond)
+		})
+	}
+}
+
+func HoldingEchoFlow(ctx *gush.FlowContext) (any, error) {
+	var input string
+	err := ctx.Decode(&input)
+	if err != nil {
+		return nil, err
+	}
+	return input, workflow.Sleep(ctx.Context, 2*time.Second)
+}
+
+func TestStartFlowJoinsARunningFlow(t *testing.T) {
+	ctx := testContext(t)
+	flowID := uniqueKey(t)
+
+	first, err := testClient.StartFlow(ctx, flowRequest(HoldingEchoFlow, "first", nil), gush.WithID(flowID))
+	require.NoError(t, err)
+	second, err := testClient.StartFlow(ctx, flowRequest(HoldingEchoFlow, "second", nil), gush.WithID(flowID))
+	require.NoError(t, err)
+	assert.Equal(t, first, second)
+
+	var output string
+	err = testClient.RunFlow(ctx, flowRequest(HoldingEchoFlow, "third", &output), gush.WithID(flowID))
+	require.NoError(t, err)
+	assert.Equal(t, "first", output)
+}
+
+func InvalidChildStartFlow(ctx *gush.FlowContext) (any, error) {
+	request := gush.FlowRequest{Flow: 123}
+	return ctx.StartFlow(request)
+}
+
+func TestStartFlowAbortsOnAChildThatCannotRun(t *testing.T) {
+	err := testClient.RunFlow(testContext(t), flowRequest(InvalidChildStartFlow, nil, nil))
+
+	require.Error(t, err)
+	assert.True(t, gush.IsPermanentError(err))
+}
+
+func DuplicateChildStartFlow(ctx *gush.FlowContext) (any, error) {
+	var childID string
+	err := ctx.Decode(&childID)
+	if err != nil {
+		return nil, err
+	}
+
+	request := gush.FlowRequest{Flow: WaitingFlow}
+	_, err = ctx.StartFlow(request, gush.WithID(childID))
+	return fmt.Sprint(err), nil
+}
+
+func TestStartFlowReportsAChildIDInUse(t *testing.T) {
+	ctx := testContext(t)
+	childID := uniqueKey(t)
+
+	_, err := testClient.StartFlow(ctx, flowRequest(IdleFlow, nil, nil), gush.WithID(childID))
+	require.NoError(t, err)
+
+	var output string
+	err = testClient.RunFlow(ctx, flowRequest(DuplicateChildStartFlow, childID, &output))
+	require.NoError(t, err)
+	assert.Equal(t, "child workflow execution already started", output)
+	require.NoError(t, testClient.TerminateFlow(ctx, childID, "test"))
+}
+
+func IdleFlow(ctx *gush.FlowContext) (any, error) {
+	return nil, workflow.Sleep(ctx.Context, time.Hour)
+}
+
+func IdleDetachingParentFlow(ctx *gush.FlowContext) (any, error) {
+	request := gush.FlowRequest{Flow: IdleFlow}
+	return ctx.StartFlow(request)
+}
+
+func TestCancelFlowStopsAStartedChild(t *testing.T) {
+	ctx := testContext(t)
+
+	var childID string
+	err := testClient.RunFlow(ctx, flowRequest(IdleDetachingParentFlow, nil, &childID))
+	require.NoError(t, err)
+	require.NoError(t, testClient.CancelFlow(ctx, childID))
+
+	canceled := func() bool {
+		flow, err := testClient.GetFlow(ctx, childID)
+		return err == nil && flow.Status == "Canceled"
+	}
+	assert.Eventually(t, canceled, 15*time.Second, 200*time.Millisecond)
+}
+
+func UnpolledChildStartFlow(ctx *gush.FlowContext) (any, error) {
+	request := gush.FlowRequest{Queue: "gush-unpolled", Flow: "NeverRuns"}
+	return ctx.StartFlow(request)
+}
+
+func TestStartFlowRunsAChildOnItsQueue(t *testing.T) {
+	ctx := testContext(t)
+
+	var childID string
+	err := testClient.RunFlow(ctx, flowRequest(UnpolledChildStartFlow, nil, &childID))
+	require.NoError(t, err)
+
+	flow, err := testClient.GetFlow(ctx, childID)
+	require.NoError(t, err)
+	assert.Equal(t, "gush-unpolled", flow.Queue)
+	require.NoError(t, testClient.TerminateFlow(ctx, childID, "test"))
+}
+
+func TestRunFlowJoiningACronScheduleWaitsForIt(t *testing.T) {
+	ctx := testContext(t)
+	flowID := uniqueKey(t)
+
+	_, err := testClient.StartFlow(ctx, flowRequest(SmallFlow, nil, nil), gush.WithID(flowID), gush.WithCron("0 0 1 1 *"))
+	require.NoError(t, err)
+
+	waiting, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	err = testClient.RunFlow(waiting, flowRequest(SmallFlow, nil, nil), gush.WithID(flowID))
+	assert.Error(t, err)
+	assert.ErrorIs(t, waiting.Err(), context.DeadlineExceeded)
+	require.NoError(t, testClient.TerminateFlow(ctx, flowID, "test"))
+}
+
+func CronChildStartFlow(ctx *gush.FlowContext) (any, error) {
+	var childID string
+	err := ctx.Decode(&childID)
+	if err != nil {
+		return nil, err
+	}
+
+	request := gush.FlowRequest{Flow: SmallFlow}
+	return ctx.StartFlow(request, gush.WithID(childID), gush.WithCron("0 0 1 1 *"))
+}
+
+func TestStartFlowRunsACronChild(t *testing.T) {
+	ctx := testContext(t)
+	childID := uniqueKey(t)
+
+	var started string
+	err := testClient.RunFlow(ctx, flowRequest(CronChildStartFlow, childID, &started))
+	require.NoError(t, err)
+	assert.Equal(t, childID, started)
+
+	flow, err := testClient.GetFlow(ctx, childID)
+	require.NoError(t, err)
+	assert.Equal(t, "Running", flow.Status)
+	require.NoError(t, testClient.TerminateFlow(ctx, childID, "test"))
+}
+
+func CronChildFlow(ctx *gush.FlowContext) (any, error) {
+	request := gush.FlowRequest{Flow: SmallFlow}
+	return nil, ctx.RunFlow(request, gush.WithCron("0 0 1 1 *"))
+}
+
+func TestRunFlowAbortsOnACronChild(t *testing.T) {
+	ctx := testContext(t)
+
+	err := testClient.RunFlow(ctx, flowRequest(CronChildFlow, nil, nil))
+	require.Error(t, err)
+	assert.True(t, gush.IsPermanentError(err))
+	assert.Contains(t, err.Error(), "StartFlow")
 }
 
 func TestParallelStepsRunThroughWithContext(t *testing.T) {
@@ -1041,7 +1372,7 @@ func CleanupStep(ctx *gush.StepContext) (any, error) {
 }
 
 func CleanupFlow(ctx *gush.FlowContext) (any, error) {
-	err := workflow.Sleep(ctx, time.Hour)
+	err := workflow.Sleep(ctx.Context, time.Hour)
 	if !temporal.IsCanceledError(err) {
 		return nil, err
 	}
@@ -1059,7 +1390,7 @@ func TestCanceledFlowCleansUpOnADisconnectedContext(t *testing.T) {
 	ctx := testContext(t)
 	key := uniqueKey(t)
 
-	err := testClient.RunFlow(ctx, flowRequest(CleanupFlow, key, nil), gush.WithAsync(), gush.WithID(key))
+	_, err := testClient.StartFlow(ctx, flowRequest(CleanupFlow, key, nil), gush.WithID(key))
 	require.NoError(t, err)
 	require.NoError(t, testClient.CancelFlow(ctx, key))
 
@@ -1127,7 +1458,7 @@ func TestLargeNumericAttributesSurviveEveryHop(t *testing.T) {
 
 func CancelOneStepFlow(ctx *gush.FlowContext) (any, error) {
 	var stepErr error
-	group := workflow.NewWaitGroup(ctx)
+	group := workflow.NewWaitGroup(ctx.Context)
 	group.Add(1)
 	workflow.Go(ctx.Context, func(g workflow.Context) {
 		defer group.Done()
@@ -1136,7 +1467,7 @@ func CancelOneStepFlow(ctx *gush.FlowContext) (any, error) {
 		cancel()
 		stepErr = ctx.WithContext(canceled).RunStep(DoubleStep, nil, nil)
 	})
-	group.Wait(ctx)
+	group.Wait(ctx.Context)
 
 	if !temporal.IsCanceledError(stepErr) {
 		return nil, fmt.Errorf("the step returned %v", stepErr)
@@ -1192,7 +1523,7 @@ func TestWaitForCancelHoldsCleanupUntilTheStepEnds(t *testing.T) {
 	ctx := testContext(t)
 	key := uniqueKey(t)
 
-	err := testClient.RunFlow(ctx, flowRequest(ChargeThenRefundFlow, key, nil), gush.WithAsync(), gush.WithID(key))
+	_, err := testClient.StartFlow(ctx, flowRequest(ChargeThenRefundFlow, key, nil), gush.WithID(key))
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {

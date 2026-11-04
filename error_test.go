@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"go.temporal.io/api/enums/v1"
+	"go.temporal.io/sdk/temporal"
 )
 
 func TestUnwrapError(t *testing.T) {
@@ -237,5 +240,42 @@ func TestWrappedErrorKeepsItsDetailsOnTheCause(t *testing.T) {
 	var detail string
 	if err := cause.Details(&detail); err != nil || detail != "the-detail" {
 		t.Errorf("detail = %q, error = %v", detail, err)
+	}
+}
+
+func TestAbortKeepsTheMessageReadable(t *testing.T) {
+	declined := NewApplicationError("declined", "Declined")
+	rejected := NewApplicationError("rejected", "Rejected")
+	tests := map[string]struct {
+		cause    error
+		expected string
+	}{
+		"plain error":                 {cause: errors.New("bad input"), expected: "bad input"},
+		"application error":           {cause: declined, expected: "declined"},
+		"wrapped application error":   {cause: fmt.Errorf("charge: %w", declined), expected: "charge: declined"},
+		"error returned from RunStep": {cause: unwrapError(declined), expected: "[Declined] declined"},
+		"application error with a cause": {
+			cause:    NewPermanentError("gateway rejected", "Declined", errors.New("card expired")),
+			expected: "gateway rejected: card expired",
+		},
+		"two wrapped errors": {cause: fmt.Errorf("%w and %w", declined, rejected), expected: "declined and rejected"},
+		"joined errors":      {cause: errors.Join(declined, rejected), expected: "declined\nrejected"},
+		"timeout":            {cause: temporal.NewTimeoutError(enums.TIMEOUT_TYPE_START_TO_CLOSE, nil), expected: "Test timeout"},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			causes := []error{test.cause}
+			aborted := abortError("StepAborted", causes)
+			if aborted.Message() != test.expected {
+				t.Errorf("message = %q, want %q", aborted.Message(), test.expected)
+			}
+			if !aborted.NonRetryable() {
+				t.Errorf("an abort must not be retried")
+			}
+			if !errors.Is(aborted, test.cause) {
+				t.Errorf("the cause is not reachable from %v", aborted)
+			}
+		})
 	}
 }

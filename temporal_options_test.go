@@ -115,16 +115,14 @@ func TestPickupTimeoutWithUnlimitedAttemptsHasNoOverallLimit(t *testing.T) {
 	}
 }
 
-func TestAsyncChildFlowOutlivesItsParent(t *testing.T) {
+func TestOnlyADetachedChildFlowOutlivesItsParent(t *testing.T) {
 	config := DefaultFlowConfig()
 
 	if newChildWorkflowOptions("queue", config).ParentClosePolicy != enums.PARENT_CLOSE_POLICY_UNSPECIFIED {
-		t.Errorf("a synchronous child must keep the default parent close policy")
+		t.Errorf("a child that is waited for must keep the default parent close policy")
 	}
-
-	config.Async = true
-	if newChildWorkflowOptions("queue", config).ParentClosePolicy != enums.PARENT_CLOSE_POLICY_ABANDON {
-		t.Errorf("an async child must be abandoned when its parent closes")
+	if newDetachedChildWorkflowOptions("queue", config).ParentClosePolicy != enums.PARENT_CLOSE_POLICY_ABANDON {
+		t.Errorf("a detached child must be abandoned when its parent closes")
 	}
 }
 
