@@ -833,8 +833,7 @@ func otlpRecords(t *testing.T) (*httptest.Server, *sync.Map) {
 // by flow_id and the inherited attributes, which is what distributed log search relies on.
 func TestLogsFromOneRunReachTheCollectorCorrelated(t *testing.T) {
 	server, records := otlpRecords(t)
-	t.Setenv("OTEL_ENDPOINT", "")
-	t.Setenv("OTEL_HTTP_ENDPOINT", server.URL)
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", server.URL)
 
 	clientOptions := gush.Options{HostPort: testHostPort}
 	exporting, err := gush.Dial(clientOptions)
@@ -900,7 +899,7 @@ func TestClientsRunInTheirNamespace(t *testing.T) {
 
 func TestPackageLevelFunctionsUseTheDefaultClient(t *testing.T) {
 	ctx := testContext(t)
-	t.Setenv("TEMPORAL_ENDPOINT", testHostPort)
+	t.Setenv("TEMPORAL_ADDRESS", testHostPort)
 	t.Setenv("TEMPORAL_NAMESPACE", "")
 	defer gush.Close()
 

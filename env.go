@@ -3,12 +3,8 @@ package gush
 import "os"
 
 const (
-	envTemporalEndpoint  = "TEMPORAL_ENDPOINT"
 	envTemporalAddress   = "TEMPORAL_ADDRESS"
 	envTemporalNamespace = "TEMPORAL_NAMESPACE"
-
-	envLogGRPCEndpoint = "OTEL_ENDPOINT"
-	envLogHTTPEndpoint = "OTEL_HTTP_ENDPOINT"
 
 	envOTLPLogsEndpoint = "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"
 	envOTLPEndpoint     = "OTEL_EXPORTER_OTLP_ENDPOINT"
@@ -25,8 +21,4 @@ func firstEnv(names ...string) string {
 		}
 	}
 	return ""
-}
-
-func temporalEndpointFromEnv() string {
-	return firstEnv(envTemporalEndpoint, envTemporalAddress)
 }

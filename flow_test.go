@@ -78,7 +78,7 @@ func TestOptionsAddNoRetryTypesOnFlowsAndSteps(t *testing.T) {
 }
 
 func TestDefaultClientReportsAFailedConnection(t *testing.T) {
-	t.Setenv(envTemporalEndpoint, "127.0.0.1:1")
+	t.Setenv(envTemporalAddress, "127.0.0.1:1")
 
 	_, err := DefaultClient()
 	if err == nil || !strings.Contains(err.Error(), "connect to Temporal") {
@@ -94,22 +94,4 @@ func TestDefaultClientReportsAFailedConnection(t *testing.T) {
 
 func TestPackageCloseWithoutAConnectionDoesNothing(t *testing.T) {
 	Close()
-}
-
-func TestTemporalEndpointFromEnv(t *testing.T) {
-	t.Setenv(envTemporalEndpoint, "")
-	t.Setenv(envTemporalAddress, "")
-	if got := temporalEndpointFromEnv(); got != "" {
-		t.Errorf("no variables: %q", got)
-	}
-
-	t.Setenv(envTemporalAddress, "address:7233")
-	if got := temporalEndpointFromEnv(); got != "address:7233" {
-		t.Errorf("TEMPORAL_ADDRESS: %q", got)
-	}
-
-	t.Setenv(envTemporalEndpoint, "endpoint:7233")
-	if got := temporalEndpointFromEnv(); got != "endpoint:7233" {
-		t.Errorf("TEMPORAL_ENDPOINT should win: %q", got)
-	}
 }

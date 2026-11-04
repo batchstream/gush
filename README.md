@@ -279,13 +279,12 @@ Lines written while Temporal replays a flow are dropped, so each appears once. H
 
 ### Export over OTLP
 
-`gush.Dial` starts exporting when an endpoint is set, and `Close` flushes. A process that logs without a client calls `gush.InitLogExport()` itself. The first variable set here wins:
+`gush.Dial` starts exporting when `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and `Close` flushes. A process that logs without a client calls `gush.InitLogExport()` itself. [OpenTelemetry's other variables](https://opentelemetry.io/docs/specs/otel/protocol/exporter/) set the headers and TLS, and the protocol is `http/protobuf` unless they ask for `grpc`:
 
-| Variable | Protocol |
-|---|---|
-| `OTEL_ENDPOINT` | OTLP/gRPC. A bare `host:port` is plaintext; a URL's scheme chooses, and `https://` means TLS. |
-| `OTEL_HTTP_ENDPOINT` | OTLP/HTTP, as an `http://` or `https://` URL. Logs go to `/v1/logs`. |
-| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT` | The [standard OpenTelemetry variables](https://opentelemetry.io/docs/specs/otel/protocol/exporter/), with their protocol, header and TLS settings. |
+```sh
+OTEL_EXPORTER_OTLP_ENDPOINT=https://collector:4317
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+```
 
 An application with its own logging pipeline keeps control: a provider set with OpenTelemetry's `global.SetLoggerProvider` always wins, and Gush uses it instead of starting an export. Importing Gush never changes that global. With no provider and no endpoint, logs go to standard error, as do the Temporal SDK's own messages unless `Options.Logger` says otherwise.
 
@@ -325,7 +324,7 @@ options := gush.Options{
 c, err := gush.Dial(options)
 ```
 
-An empty `HostPort` falls back to `TEMPORAL_ENDPOINT`, then `TEMPORAL_ADDRESS`, then `localhost:7233`. An empty `Namespace` falls back to `TEMPORAL_NAMESPACE`, then the default namespace.
+An empty `HostPort` falls back to `TEMPORAL_ADDRESS`, then `localhost:7233`. An empty `Namespace` falls back to `TEMPORAL_NAMESPACE`, then the default namespace.
 
 The package-level functions, such as `gush.RunFlow` and `gush.Serve`, use a shared client configured from those variables. They suit a process that talks to one server.
 

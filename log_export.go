@@ -59,17 +59,11 @@ var logExport struct {
 	users    int
 }
 
-// InitLogExport starts exporting logs over OTLP when an endpoint is set in the environment,
-// and returns a function that flushes them and stops. Dial calls it, so call it directly
-// only for a process that logs without a Client.
-//
-// The first variable set here wins:
-//
-//   - OTEL_ENDPOINT: OTLP/gRPC. A bare host:port is plaintext, and a URL's scheme chooses:
-//     https means TLS.
-//   - OTEL_HTTP_ENDPOINT: OTLP/HTTP, as an http:// or https:// URL. Logs go to /v1/logs.
-//   - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT: the standard
-//     OpenTelemetry variables, including their protocol, header and TLS settings.
+// InitLogExport starts exporting logs over OTLP when OTEL_EXPORTER_OTLP_LOGS_ENDPOINT or
+// OTEL_EXPORTER_OTLP_ENDPOINT is set, and returns a function that flushes them and stops.
+// OpenTelemetry's other standard variables set the protocol, headers and TLS, and the
+// default protocol is http/protobuf. Dial calls it, so call it directly only for a process
+// that logs without a Client.
 //
 // A LoggerProvider the host already set with OpenTelemetry's global.SetLoggerProvider
 // always wins, and InitLogExport leaves it alone. Importing gush never changes the global
@@ -132,52 +126,18 @@ func releaseLogExport() {
 	}
 }
 
-// newLogExporterFromEnv returns nil when no endpoint is configured.
+// newLogExporterFromEnv returns nil when no endpoint is configured. Otherwise the exporter
+// reads OpenTelemetry's standard variables itself. It accepts an endpoint with no scheme,
+// such as collector:4318, and then loses every record, so that is an error here.
 func newLogExporterFromEnv(ctx context.Context) (sdklog.Exporter, error) {
-	grpcEndpoint := firstEnv(envLogGRPCEndpoint)
-	if grpcEndpoint != "" {
-		return newGRPCLogExporter(ctx, grpcEndpoint)
+	endpoint := firstEnv(envOTLPLogsEndpoint, envOTLPEndpoint)
+	if endpoint == "" {
+		return nil, nil
 	}
-
-	httpEndpoint := firstEnv(envLogHTTPEndpoint)
-	if httpEndpoint != "" {
-		return newHTTPLogExporter(ctx, httpEndpoint)
-	}
-
-	if firstEnv(envOTLPLogsEndpoint, envOTLPEndpoint) != "" {
-		return newStandardLogExporter(ctx)
-	}
-	return nil, nil
-}
-
-func newGRPCLogExporter(ctx context.Context, endpoint string) (sdklog.Exporter, error) {
-	options := []otlploggrpc.Option{otlploggrpc.WithEndpoint(endpoint), otlploggrpc.WithInsecure()}
-	if strings.Contains(endpoint, "://") {
-		options = []otlploggrpc.Option{otlploggrpc.WithEndpointURL(endpoint)}
-	}
-
-	exporter, err := otlploggrpc.New(ctx, options...)
-	if err != nil {
-		return nil, fmt.Errorf("gush: create OTLP/gRPC log exporter: %w", err)
-	}
-	return exporter, nil
-}
-
-func newHTTPLogExporter(ctx context.Context, endpoint string) (sdklog.Exporter, error) {
 	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
-		return nil, fmt.Errorf("gush: OTLP/HTTP log endpoint %q must start with http:// or https://", endpoint)
+		return nil, fmt.Errorf("gush: OTLP log endpoint %q must start with http:// or https://", endpoint)
 	}
 
-	exporter, err := otlploghttp.New(ctx, otlploghttp.WithEndpointURL(endpoint), otlploghttp.WithURLPath("/v1/logs"))
-	if err != nil {
-		return nil, fmt.Errorf("gush: create OTLP/HTTP log exporter: %w", err)
-	}
-	return exporter, nil
-}
-
-// newStandardLogExporter lets the exporter read OpenTelemetry's own variables. Their
-// default protocol is http/protobuf.
-func newStandardLogExporter(ctx context.Context) (sdklog.Exporter, error) {
 	if firstEnv(envOTLPLogsProtocol, envOTLPProtocol) == "grpc" {
 		exporter, err := otlploggrpc.New(ctx)
 		if err != nil {

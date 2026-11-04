@@ -24,12 +24,12 @@ type Client struct {
 // Dial connects to Temporal and starts OTLP log export when it is configured; see
 // InitLogExport.
 //
-// An empty HostPort falls back to TEMPORAL_ENDPOINT, then TEMPORAL_ADDRESS, then the
-// SDK's default of localhost:7233. An empty Namespace falls back to TEMPORAL_NAMESPACE,
-// then the SDK's default namespace.
+// An empty HostPort falls back to TEMPORAL_ADDRESS, then the SDK's default of
+// localhost:7233. An empty Namespace falls back to TEMPORAL_NAMESPACE, then the SDK's
+// default namespace.
 func Dial(options Options) (*Client, error) {
 	if options.HostPort == "" {
-		options.HostPort = temporalEndpointFromEnv()
+		options.HostPort = os.Getenv(envTemporalAddress)
 	}
 	if options.Namespace == "" {
 		options.Namespace = os.Getenv(envTemporalNamespace)

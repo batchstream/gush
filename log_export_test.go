@@ -23,10 +23,7 @@ import (
 // clearLogEnv isolates a test from endpoints set in the environment running it.
 func clearLogEnv(t *testing.T) {
 	t.Helper()
-	names := []string{
-		envLogGRPCEndpoint, envLogHTTPEndpoint,
-		envOTLPLogsEndpoint, envOTLPEndpoint, envOTLPLogsProtocol, envOTLPProtocol,
-	}
+	names := []string{envOTLPLogsEndpoint, envOTLPEndpoint, envOTLPLogsProtocol, envOTLPProtocol}
 	for _, name := range names {
 		t.Setenv(name, "")
 	}
@@ -190,7 +187,7 @@ func TestTimeEndUsesTheLoggersClock(t *testing.T) {
 func TestExportsOverHTTP(t *testing.T) {
 	clearLogEnv(t)
 	server, collected, paths := startHTTPCollector(t)
-	t.Setenv(envLogHTTPEndpoint, server.URL)
+	t.Setenv(envOTLPEndpoint, server.URL)
 
 	exportOneRecord(t, "over http")
 
@@ -198,99 +195,40 @@ func TestExportsOverHTTP(t *testing.T) {
 	assert.Contains(t, *paths, "/v1/logs")
 }
 
-func TestExportsOverGRPCToABareHostPort(t *testing.T) {
+func TestExportsOverGRPC(t *testing.T) {
 	clearLogEnv(t)
 	endpoint, collected := startGRPCCollector(t)
-	t.Setenv(envLogGRPCEndpoint, endpoint)
+	t.Setenv(envOTLPLogsEndpoint, "http://"+endpoint)
+	t.Setenv(envOTLPLogsProtocol, "grpc")
 
 	exportOneRecord(t, "over grpc")
 
 	assertCollected(t, collected, "over grpc")
 }
 
-func TestExportsOverGRPCToAURL(t *testing.T) {
-	clearLogEnv(t)
-	endpoint, collected := startGRPCCollector(t)
-	t.Setenv(envLogGRPCEndpoint, "http://"+endpoint)
+func TestRejectsAnEndpointThatIsNotAURL(t *testing.T) {
+	tests := map[string]struct {
+		variable string
+		protocol string
+	}{
+		"http":          {variable: envOTLPEndpoint},
+		"grpc":          {variable: envOTLPEndpoint, protocol: "grpc"},
+		"logs variable": {variable: envOTLPLogsEndpoint},
+	}
 
-	exportOneRecord(t, "over grpc url")
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			clearLogEnv(t)
+			t.Setenv(test.variable, "collector:4318")
+			t.Setenv(envOTLPProtocol, test.protocol)
 
-	assertCollected(t, collected, "over grpc url")
-}
+			_, err := InitLogExport()
 
-func TestExportsThroughStandardVariables(t *testing.T) {
-	clearLogEnv(t)
-	server, collected, paths := startHTTPCollector(t)
-	t.Setenv(envOTLPEndpoint, server.URL)
-
-	exportOneRecord(t, "over standard http")
-
-	assertCollected(t, collected, "over standard http")
-	assert.Contains(t, *paths, "/v1/logs")
-}
-
-func TestExportsThroughStandardVariablesOverGRPC(t *testing.T) {
-	clearLogEnv(t)
-	endpoint, collected := startGRPCCollector(t)
-	t.Setenv(envOTLPLogsEndpoint, "http://"+endpoint)
-	t.Setenv(envOTLPLogsProtocol, "grpc")
-
-	exportOneRecord(t, "over standard grpc")
-
-	assertCollected(t, collected, "over standard grpc")
-}
-
-func TestGRPCEndpointWinsOverHTTP(t *testing.T) {
-	clearLogEnv(t)
-	endpoint, grpcCollected := startGRPCCollector(t)
-	server, httpCollected, _ := startHTTPCollector(t)
-	t.Setenv(envLogGRPCEndpoint, endpoint)
-	t.Setenv(envLogHTTPEndpoint, server.URL)
-
-	exportOneRecord(t, "precedence")
-
-	assertCollected(t, grpcCollected, "precedence")
-	_, reachedHTTP := httpCollected.attributesOf("precedence")
-	assert.False(t, reachedHTTP)
-}
-
-func TestHTTPEndpointWinsOverTheStandardVariables(t *testing.T) {
-	clearLogEnv(t)
-	own, ownCollected, _ := startHTTPCollector(t)
-	standard, standardCollected, _ := startHTTPCollector(t)
-	t.Setenv(envLogHTTPEndpoint, own.URL)
-	t.Setenv(envOTLPEndpoint, standard.URL)
-
-	exportOneRecord(t, "http over standard")
-
-	assertCollected(t, ownCollected, "http over standard")
-	_, reachedStandard := standardCollected.attributesOf("http over standard")
-	assert.False(t, reachedStandard)
-}
-
-func TestGRPCEndpointWinsOverTheStandardVariables(t *testing.T) {
-	clearLogEnv(t)
-	own, ownCollected := startGRPCCollector(t)
-	standard, standardCollected, _ := startHTTPCollector(t)
-	t.Setenv(envLogGRPCEndpoint, own)
-	t.Setenv(envOTLPEndpoint, standard.URL)
-
-	exportOneRecord(t, "grpc over standard")
-
-	assertCollected(t, ownCollected, "grpc over standard")
-	_, reachedStandard := standardCollected.attributesOf("grpc over standard")
-	assert.False(t, reachedStandard)
-}
-
-func TestRejectsAnHTTPEndpointThatIsNotAURL(t *testing.T) {
-	clearLogEnv(t)
-	t.Setenv(envLogHTTPEndpoint, "collector:4318")
-
-	_, err := InitLogExport()
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must start with http")
-	assert.Same(t, unconfiguredLogProvider, global.GetLoggerProvider())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "must start with http")
+			assert.Same(t, unconfiguredLogProvider, global.GetLoggerProvider())
+		})
+	}
 }
 
 func TestNoEndpointLeavesGlobalProviderAlone(t *testing.T) {
@@ -306,7 +244,7 @@ func TestNoEndpointLeavesGlobalProviderAlone(t *testing.T) {
 func TestExportSetsTheGlobalProviderUntilItStops(t *testing.T) {
 	clearLogEnv(t)
 	server, _, _ := startHTTPCollector(t)
-	t.Setenv(envLogHTTPEndpoint, server.URL)
+	t.Setenv(envOTLPEndpoint, server.URL)
 
 	shutdown, err := InitLogExport()
 	require.NoError(t, err)
@@ -319,7 +257,7 @@ func TestExportSetsTheGlobalProviderUntilItStops(t *testing.T) {
 func TestExportIsSharedUntilTheLastUserStops(t *testing.T) {
 	clearLogEnv(t)
 	server, collected, _ := startHTTPCollector(t)
-	t.Setenv(envLogHTTPEndpoint, server.URL)
+	t.Setenv(envOTLPEndpoint, server.URL)
 
 	first, err := InitLogExport()
 	require.NoError(t, err)
@@ -340,7 +278,7 @@ func TestExportIsSharedUntilTheLastUserStops(t *testing.T) {
 func TestHostProviderWinsOverEndpoints(t *testing.T) {
 	clearLogEnv(t)
 	server, collected, _ := startHTTPCollector(t)
-	t.Setenv(envLogHTTPEndpoint, server.URL)
+	t.Setenv(envOTLPEndpoint, server.URL)
 
 	hostLogs := captureHostLogs(t)
 	host := global.GetLoggerProvider()
@@ -359,7 +297,7 @@ func TestHostProviderWinsOverEndpoints(t *testing.T) {
 func TestHostProviderSetAfterExportStartedTakesOver(t *testing.T) {
 	clearLogEnv(t)
 	server, _, _ := startHTTPCollector(t)
-	t.Setenv(envLogHTTPEndpoint, server.URL)
+	t.Setenv(envOTLPEndpoint, server.URL)
 
 	// Runs last, because captureHostLogs restores the export's stopped provider.
 	t.Cleanup(func() { global.SetLoggerProvider(unconfiguredLogProvider) })
