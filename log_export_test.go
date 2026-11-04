@@ -254,6 +254,34 @@ func TestGRPCEndpointWinsOverHTTP(t *testing.T) {
 	assert.False(t, reachedHTTP)
 }
 
+func TestHTTPEndpointWinsOverTheStandardVariables(t *testing.T) {
+	clearLogEnv(t)
+	own, ownCollected, _ := startHTTPCollector(t)
+	standard, standardCollected, _ := startHTTPCollector(t)
+	t.Setenv(envLogHTTPEndpoint, own.URL)
+	t.Setenv(envOTLPEndpoint, standard.URL)
+
+	exportOneRecord(t, "http over standard")
+
+	assertCollected(t, ownCollected, "http over standard")
+	_, reachedStandard := standardCollected.attributesOf("http over standard")
+	assert.False(t, reachedStandard)
+}
+
+func TestGRPCEndpointWinsOverTheStandardVariables(t *testing.T) {
+	clearLogEnv(t)
+	own, ownCollected := startGRPCCollector(t)
+	standard, standardCollected, _ := startHTTPCollector(t)
+	t.Setenv(envLogGRPCEndpoint, own)
+	t.Setenv(envOTLPEndpoint, standard.URL)
+
+	exportOneRecord(t, "grpc over standard")
+
+	assertCollected(t, ownCollected, "grpc over standard")
+	_, reachedStandard := standardCollected.attributesOf("grpc over standard")
+	assert.False(t, reachedStandard)
+}
+
 func TestRejectsAnHTTPEndpointThatIsNotAURL(t *testing.T) {
 	clearLogEnv(t)
 	t.Setenv(envLogHTTPEndpoint, "collector:4318")
