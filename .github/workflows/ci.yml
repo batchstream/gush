@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Tests, vet and formatting
+        run: |
+          go mod tidy -diff
+          go test -race -count=1 -timeout=90s -cover ./...
+          go vet ./...
+          go vet -tags integration ./...
+          test -z "$(gofmt -l .)"
+      - name: Staticcheck
+        run: |
+          go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -checks all,-SA1019 ./...
+          go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -tags integration -checks all,-SA1019 ./...
+
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Integration tests against a Temporal dev server
+        run: go test -race -count=1 -tags integration -timeout=300s ./...
