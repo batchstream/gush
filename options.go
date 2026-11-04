@@ -14,7 +14,7 @@ type CommonConfig struct {
 
 	// FairKey groups work for fair scheduling across tenants or user groups. Keys are
 	// cut to the 64 bytes Temporal accepts, so keys that agree up to there share a group.
-	FairKey string `json:"fairness"`
+	FairKey string `json:"fair_key"`
 
 	// LogAttributes are attached to every log record and inherited by child flows and steps.
 	LogAttributes map[string]any `json:"log_attributes"`

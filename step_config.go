@@ -11,14 +11,14 @@ type StepConfig struct {
 
 	// AttemptTimeout limits each attempt, not the step as a whole. It also bounds how long
 	// a suspended step waits for Resume.
-	AttemptTimeout time.Duration `json:"timeout"`
+	AttemptTimeout time.Duration `json:"attempt_timeout"`
 
 	// HeartbeatTimeout fails an attempt that goes this long without calling Heartbeat.
 	// Zero disables it.
 	HeartbeatTimeout time.Duration `json:"heartbeat_timeout"`
 
 	// PickupTimeout fails the step if no worker picks it up in time. Zero means unlimited.
-	PickupTimeout time.Duration `json:"worker_pickup_timeout"`
+	PickupTimeout time.Duration `json:"pickup_timeout"`
 
 	// WaitForCancel makes RunStep wait for a canceled step to end. See WithWaitForCancel.
 	WaitForCancel bool `json:"wait_for_cancel"`

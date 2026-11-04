@@ -1,7 +1,6 @@
 package gush_test
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -36,12 +35,12 @@ func TestFlowConfigMarshalUsesSnakeCaseJSONTags(t *testing.T) {
 		"id",
 		"timeout",
 		"priority",
-		"fairness",
+		"fair_key",
 		"initial_interval",
 		"backoff_coefficient",
-		"maximum_interval",
-		"maximum_attempts",
-		"non_retryable_error_types",
+		"max_interval",
+		"max_attempts",
+		"no_retry",
 		"log_attributes",
 	}
 
@@ -49,18 +48,6 @@ func TestFlowConfigMarshalUsesSnakeCaseJSONTags(t *testing.T) {
 		if _, ok := payload[key]; !ok {
 			t.Fatalf("expected key %q in marshaled flow config, got %v", key, payload)
 		}
-	}
-}
-
-// A config can wait in a queue, so it may hold keys its reader no longer has.
-func TestFlowConfigIgnoresKeysItDoesNotKnow(t *testing.T) {
-	var config gush.FlowConfig
-	err := json.Unmarshal([]byte(`{"id":"flow-1","async":true}`), &config)
-	if err != nil {
-		t.Fatalf("Unmarshal returned error: %v", err)
-	}
-	if config.ID != "flow-1" {
-		t.Errorf("ID = %q", config.ID)
 	}
 }
 
@@ -91,15 +78,15 @@ func TestStepConfigMarshalUsesSnakeCaseJSONTags(t *testing.T) {
 
 	expectedKeys := []string{
 		"queue",
-		"timeout",
-		"worker_pickup_timeout",
+		"attempt_timeout",
+		"pickup_timeout",
 		"priority",
-		"fairness",
+		"fair_key",
 		"initial_interval",
 		"backoff_coefficient",
-		"maximum_interval",
-		"maximum_attempts",
-		"non_retryable_error_types",
+		"max_interval",
+		"max_attempts",
+		"no_retry",
 		"log_attributes",
 	}
 

@@ -11,7 +11,7 @@ import (
 
 // FlowConfig holds the settings of one flow run. Its JSON form is stable, so a config can
 // be queued and applied later with WithConfig. A field left out of the JSON keeps its
-// default, while a zero written out is taken as it is, so "maximum_attempts": 0 still
+// default, while a zero written out is taken as it is, so "max_attempts": 0 still
 // means unlimited. Waiting is not part of a config: whoever applies it chooses RunFlow or
 // StartFlow.
 //

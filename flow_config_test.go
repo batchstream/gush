@@ -259,7 +259,7 @@ func TestPartialJSONConfigKeepsTheDefaults(t *testing.T) {
 }
 
 func TestJSONConfigTakesAWrittenZero(t *testing.T) {
-	config := decodedConfig(t, `{"maximum_attempts":0}`)
+	config := decodedConfig(t, `{"max_attempts":0}`)
 
 	if config.MaxAttempts != 0 {
 		t.Errorf("attempts = %d, want the written 0, which means unlimited", config.MaxAttempts)
@@ -320,7 +320,7 @@ func TestWithConfigOverridesWhatItSets(t *testing.T) {
 	inherited := gush.DefaultFlowConfig()
 	inherited.Priority = gush.PriorityHigh
 
-	config := decodedConfig(t, `{"priority":"low","fairness":"tenant-2"}`)
+	config := decodedConfig(t, `{"priority":"low","fair_key":"tenant-2"}`)
 	inherited.Apply(gush.WithConfig(config))
 
 	if inherited.Priority != gush.PriorityLow || inherited.FairKey != "tenant-2" {

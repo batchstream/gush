@@ -16,14 +16,14 @@ type RetryPolicy struct {
 	BackoffCoefficient float64 `json:"backoff_coefficient"`
 
 	// MaxInterval caps the delay between retries. Zero means 100 times InitialInterval.
-	MaxInterval time.Duration `json:"maximum_interval"`
+	MaxInterval time.Duration `json:"max_interval"`
 
 	// MaxAttempts is the total number of attempts, including the first. Zero means
 	// unlimited.
-	MaxAttempts int32 `json:"maximum_attempts"`
+	MaxAttempts int32 `json:"max_attempts"`
 
 	// NoRetry lists the ApplicationError types that fail immediately.
-	NoRetry []string `json:"non_retryable_error_types"`
+	NoRetry []string `json:"no_retry"`
 }
 
 // totalBackoff returns the time spent waiting between attempts if all MaxAttempts are used,

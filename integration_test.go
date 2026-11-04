@@ -665,7 +665,7 @@ func TestConfigDecodedFromJSONRuns(t *testing.T) {
 	ctx := testContext(t)
 	flowID := uniqueKey(t)
 
-	raw := fmt.Sprintf(`{"id":%q,"priority":"high","fairness":"tenant-json","maximum_attempts":1}`, flowID)
+	raw := fmt.Sprintf(`{"id":%q,"priority":"high","fair_key":"tenant-json","max_attempts":1}`, flowID)
 	config := &gush.FlowConfig{}
 	require.NoError(t, gush.Decode([]byte(raw), config))
 
