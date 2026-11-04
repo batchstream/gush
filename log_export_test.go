@@ -24,7 +24,7 @@ import (
 func clearLogEnv(t *testing.T) {
 	t.Helper()
 	names := []string{
-		envLogGRPCEndpoint, envLogHTTPEndpoint, envLogHTTPEndpointLegacy,
+		envLogGRPCEndpoint, envLogHTTPEndpoint,
 		envOTLPLogsEndpoint, envOTLPEndpoint, envOTLPLogsProtocol, envOTLPProtocol,
 	}
 	for _, name := range names {
@@ -198,16 +198,6 @@ func TestExportsOverHTTP(t *testing.T) {
 	assert.Contains(t, *paths, "/v1/logs")
 }
 
-func TestExportsOverHTTPThroughTheLegacyAlias(t *testing.T) {
-	clearLogEnv(t)
-	server, collected, _ := startHTTPCollector(t)
-	t.Setenv(envLogHTTPEndpointLegacy, server.URL)
-
-	exportOneRecord(t, "over legacy alias")
-
-	assertCollected(t, collected, "over legacy alias")
-}
-
 func TestExportsOverGRPCToABareHostPort(t *testing.T) {
 	clearLogEnv(t)
 	endpoint, collected := startGRPCCollector(t)
@@ -264,18 +254,32 @@ func TestGRPCEndpointWinsOverHTTP(t *testing.T) {
 	assert.False(t, reachedHTTP)
 }
 
-func TestHTTPEndpointWinsOverItsDeprecatedAlias(t *testing.T) {
+func TestHTTPEndpointWinsOverTheStandardVariables(t *testing.T) {
 	clearLogEnv(t)
-	legacy, legacyCollected, _ := startHTTPCollector(t)
-	current, currentCollected, _ := startHTTPCollector(t)
-	t.Setenv(envLogHTTPEndpointLegacy, legacy.URL)
-	t.Setenv(envLogHTTPEndpoint, current.URL)
+	own, ownCollected, _ := startHTTPCollector(t)
+	standard, standardCollected, _ := startHTTPCollector(t)
+	t.Setenv(envLogHTTPEndpoint, own.URL)
+	t.Setenv(envOTLPEndpoint, standard.URL)
 
-	exportOneRecord(t, "alias precedence")
+	exportOneRecord(t, "http over standard")
 
-	assertCollected(t, currentCollected, "alias precedence")
-	_, reachedLegacy := legacyCollected.attributesOf("alias precedence")
-	assert.False(t, reachedLegacy)
+	assertCollected(t, ownCollected, "http over standard")
+	_, reachedStandard := standardCollected.attributesOf("http over standard")
+	assert.False(t, reachedStandard)
+}
+
+func TestGRPCEndpointWinsOverTheStandardVariables(t *testing.T) {
+	clearLogEnv(t)
+	own, ownCollected := startGRPCCollector(t)
+	standard, standardCollected, _ := startHTTPCollector(t)
+	t.Setenv(envLogGRPCEndpoint, own)
+	t.Setenv(envOTLPEndpoint, standard.URL)
+
+	exportOneRecord(t, "grpc over standard")
+
+	assertCollected(t, ownCollected, "grpc over standard")
+	_, reachedStandard := standardCollected.attributesOf("grpc over standard")
+	assert.False(t, reachedStandard)
 }
 
 func TestRejectsAnHTTPEndpointThatIsNotAURL(t *testing.T) {
