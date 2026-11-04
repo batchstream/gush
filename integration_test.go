@@ -87,7 +87,7 @@ func runWithTemporal(m *testing.M) int {
 			WrappingFlow, ParallelFlow, CleanupFlow, CountdownFlow, AttributeEchoFlow, CancelOneStepFlow, ChargeThenRefundFlow,
 			DetachingParentFlow, DetailReadingFlow, AttributeRecordingFlow, InheritingDetachingParentFlow,
 			CanceledDetachingFlow, HoldingEchoFlow, InvalidChildStartFlow, DuplicateChildStartFlow,
-			IdleFlow, IdleDetachingParentFlow, UnpolledChildStartFlow, RetriableApprovalFlow, RaisedVersionFlow).
+			IdleFlow, IdleDetachingParentFlow, UnpolledChildStartFlow, RetriableApprovalFlow, RaisedVersionFlow, ChildIDInUseFlow).
 		WithSteps(DoubleStep, FailingStep, PlainFailureStep, AbortStep, ApprovalStep, SlowStep, HeartbeatStep, SilentStep,
 			PurgeCacheStep, AttributesStep, InheritanceStep, WrappedAbortStep, DecliningStep, CleanupStep, AttributeEchoStep, ChargingStep, RefundStep, DetailedStep).
 		WithContext(serveContext)
@@ -1239,6 +1239,60 @@ func TestStartFlowJoinsARunningFlow(t *testing.T) {
 	err = testClient.RunFlow(ctx, flowRequest(HoldingEchoFlow, "third", &output), gush.WithID(flowID))
 	require.NoError(t, err)
 	assert.Equal(t, "first", output)
+}
+
+func TestWithErrorIfRunningRefusesARunningFlow(t *testing.T) {
+	ctx := testContext(t)
+	flowID := uniqueKey(t)
+
+	_, err := testClient.StartFlow(ctx, flowRequest(HoldingEchoFlow, "first", nil), gush.WithID(flowID))
+	require.NoError(t, err)
+
+	_, err = testClient.StartFlow(ctx, flowRequest(HoldingEchoFlow, "second", nil),
+		gush.WithID(flowID), gush.WithErrorIfRunning())
+	assert.True(t, gush.IsFlowRunningError(err), "%v", err)
+
+	err = testClient.RunFlow(ctx, flowRequest(HoldingEchoFlow, "third", nil),
+		gush.WithID(flowID), gush.WithErrorIfRunning())
+	assert.True(t, gush.IsFlowRunningError(err), "%v", err)
+
+	var output string
+	err = testClient.RunFlow(ctx, flowRequest(HoldingEchoFlow, "fourth", &output), gush.WithID(flowID))
+	require.NoError(t, err)
+	assert.Equal(t, "first", output)
+
+	_, err = testClient.StartFlow(ctx, flowRequest(SmallFlow, nil, nil),
+		gush.WithID(flowID), gush.WithErrorIfRunning())
+	assert.NoError(t, err, "a flow that has finished does not count as running")
+}
+
+func ChildIDInUseFlow(ctx *gush.FlowContext) (any, error) {
+	var childID string
+	err := ctx.Decode(&childID)
+	if err != nil {
+		return nil, err
+	}
+
+	request := gush.FlowRequest{Flow: WaitingFlow}
+	runErr := ctx.RunFlow(request, gush.WithID(childID))
+	_, startErr := ctx.StartFlow(request, gush.WithID(childID))
+	recognized := []bool{gush.IsFlowRunningError(runErr), gush.IsFlowRunningError(startErr)}
+	return recognized, nil
+}
+
+func TestAChildReusingARunningIDGetsTheSameError(t *testing.T) {
+	ctx := testContext(t)
+	childID := uniqueKey(t)
+
+	_, err := testClient.StartFlow(ctx, flowRequest(IdleFlow, nil, nil), gush.WithID(childID))
+	require.NoError(t, err)
+	defer func() { _ = testClient.TerminateFlow(ctx, childID, "test") }()
+
+	var recognized []bool
+	err = testClient.RunFlow(ctx, flowRequest(ChildIDInUseFlow, childID, &recognized))
+
+	require.NoError(t, err)
+	assert.Equal(t, []bool{true, true}, recognized)
 }
 
 func InvalidChildStartFlow(ctx *gush.FlowContext) (any, error) {

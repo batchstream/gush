@@ -34,6 +34,7 @@ func TestFlowConfigMarshalUsesSnakeCaseJSONTags(t *testing.T) {
 	expectedKeys := []string{
 		"id",
 		"timeout",
+		"error_if_running",
 		"priority",
 		"fair_key",
 		"initial_interval",

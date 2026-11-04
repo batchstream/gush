@@ -154,7 +154,8 @@ A step that is already running only finds out about the cancellation through `ct
 | `WithFairKey(key)` | both | Group to schedule fairly against, such as a tenant. |
 | `WithLogAttribute(k, v)` | both | Attribute on every log line of this run and its children. |
 | `WithLogAttributes(m)` | both | The same, for several attributes. |
-| `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's input, and a child flow gets an error. |
+| `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's input, so concurrent callers share one run. A child flow gets an error that `gush.IsFlowRunningError` recognizes. |
+| `WithErrorIfRunning()` | flow | A client's `RunFlow` or `StartFlow` returns that same error instead of joining. |
 | `WithTimeout(d)` | flow | Limit on the whole execution, including every retry. |
 | `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Settings left out of the JSON, or zero, use their defaults. Whoever applies it chooses `RunFlow` or `StartFlow`. |
 | `WithQueue(q)` | step | Runs on another queue. |

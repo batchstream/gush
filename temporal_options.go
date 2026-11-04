@@ -33,6 +33,8 @@ func newStartWorkflowOptions(queue string, config *FlowConfig) client.StartWorkf
 		RetryPolicy:              config.temporalPolicy(defaultFlowAttempts),
 		Priority:                 newTemporalPriority(&config.CommonConfig),
 		WorkflowExecutionTimeout: config.Timeout,
+
+		WorkflowExecutionErrorWhenAlreadyStarted: config.ErrorIfRunning,
 	}
 	return options
 }

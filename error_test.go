@@ -282,6 +282,14 @@ func TestAbortKeepsTheMessageReadable(t *testing.T) {
 	}
 }
 
+func TestIsFlowRunningErrorIgnoresOtherErrors(t *testing.T) {
+	for _, err := range []error{nil, errors.New("other"), NewApplicationError("other", "Other")} {
+		if IsFlowRunningError(err) {
+			t.Errorf("IsFlowRunningError(%v) = true", err)
+		}
+	}
+}
+
 func TestResumeError(t *testing.T) {
 	t.Run("no error stays nil", func(t *testing.T) {
 		if err := resumeError(nil); err != nil {

@@ -18,6 +18,10 @@ type FlowConfig struct {
 
 	// Timeout limits the whole execution, including every retry. Zero means unlimited.
 	Timeout time.Duration `json:"timeout"`
+
+	// ErrorIfRunning makes a client's RunFlow or StartFlow fail rather than join a flow
+	// already running with this ID. See WithErrorIfRunning.
+	ErrorIfRunning bool `json:"error_if_running"`
 }
 
 // DefaultFlowConfig returns the settings a flow run starts from: one attempt, medium
@@ -74,10 +78,22 @@ func WithConfig(config *FlowConfig) FlowOption {
 
 // WithID sets the flow ID. Without it one is generated, which StartFlow returns. While a
 // flow with this ID is running, a client's RunFlow or StartFlow joins it instead of starting
-// another and ignores this run's input, and a child flow gets an error.
+// another and ignores this run's input, so concurrent callers can share one run. Use
+// WithErrorIfRunning to be told instead. A child flow always gets an error, because a flow
+// cannot wait for a flow it did not start; check it with IsFlowRunningError.
 func WithID(flowID string) FlowOption {
 	apply := func(config *FlowConfig) {
 		config.ID = flowID
+	}
+	return flowOption(apply)
+}
+
+// WithErrorIfRunning makes a client's RunFlow or StartFlow return an error, which
+// IsFlowRunningError recognizes, rather than join a flow already running with this ID and
+// ignore this run's input.
+func WithErrorIfRunning() FlowOption {
+	apply := func(config *FlowConfig) {
+		config.ErrorIfRunning = true
 	}
 	return flowOption(apply)
 }
