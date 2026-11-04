@@ -2,6 +2,7 @@ package gush
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 
 	"go.temporal.io/sdk/temporal"
@@ -130,15 +131,16 @@ func unwrapError(err error) error {
 	}
 }
 
-// abortError is the permanent error behind Abort on flows and steps.
+// temporalErrorType matches what the SDK's errors add to their text, such as
+// "(type: Declined, retryable: true)".
+var temporalErrorType = regexp.MustCompile(` \(type: [^()]*\)`)
+
+// abortError is the permanent error behind Abort on flows and steps. Its message is the
+// cause's text, which keeps what the cause wraps, without the SDK's additions.
 func abortError(errType string, cause []error) *ApplicationError {
 	if len(cause) == 0 || cause[0] == nil {
 		return NewPermanentError("unknown error", errType, nil)
 	}
-	message := cause[0].Error()
-	var appErr *ApplicationError
-	if errors.As(cause[0], &appErr) {
-		message = strings.Replace(message, appErr.Error(), appErr.Message(), 1)
-	}
+	message := temporalErrorType.ReplaceAllString(cause[0].Error(), "")
 	return NewPermanentError(message, errType, cause[0])
 }

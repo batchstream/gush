@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"go.temporal.io/api/enums/v1"
+	"go.temporal.io/sdk/temporal"
 )
 
 func TestUnwrapError(t *testing.T) {
@@ -242,6 +245,7 @@ func TestWrappedErrorKeepsItsDetailsOnTheCause(t *testing.T) {
 
 func TestAbortKeepsTheMessageReadable(t *testing.T) {
 	declined := NewApplicationError("declined", "Declined")
+	rejected := NewApplicationError("rejected", "Rejected")
 	tests := map[string]struct {
 		cause    error
 		expected string
@@ -250,6 +254,13 @@ func TestAbortKeepsTheMessageReadable(t *testing.T) {
 		"application error":           {cause: declined, expected: "declined"},
 		"wrapped application error":   {cause: fmt.Errorf("charge: %w", declined), expected: "charge: declined"},
 		"error returned from RunStep": {cause: unwrapError(declined), expected: "[Declined] declined"},
+		"application error with a cause": {
+			cause:    NewPermanentError("gateway rejected", "Declined", errors.New("card expired")),
+			expected: "gateway rejected: card expired",
+		},
+		"two wrapped errors": {cause: fmt.Errorf("%w and %w", declined, rejected), expected: "declined and rejected"},
+		"joined errors":      {cause: errors.Join(declined, rejected), expected: "declined\nrejected"},
+		"timeout":            {cause: temporal.NewTimeoutError(enums.TIMEOUT_TYPE_START_TO_CLOSE, nil), expected: "Test timeout"},
 	}
 
 	for name, test := range tests {
