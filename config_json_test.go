@@ -80,6 +80,8 @@ func TestStepConfigMarshalUsesSnakeCaseJSONTags(t *testing.T) {
 		"queue",
 		"attempt_timeout",
 		"pickup_timeout",
+		"heartbeat_timeout",
+		"wait_for_cancel",
 		"priority",
 		"fair_key",
 		"initial_interval",

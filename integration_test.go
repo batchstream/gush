@@ -834,6 +834,9 @@ func otlpRecords(t *testing.T) (*httptest.Server, *sync.Map) {
 func TestLogsFromOneRunReachTheCollectorCorrelated(t *testing.T) {
 	server, records := otlpRecords(t)
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", server.URL)
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "")
 
 	clientOptions := gush.Options{HostPort: testHostPort}
 	exporting, err := gush.Dial(clientOptions)
