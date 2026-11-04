@@ -32,7 +32,7 @@ func DefaultStepConfig() *StepConfig {
 	config.InitialInterval = 1 * time.Second
 	config.BackoffCoefficient = 2.0
 	config.MaxInterval = 100 * time.Second
-	config.MaxAttempts = 10
+	config.MaxAttempts = defaultStepAttempts
 	config.Priority = PriorityMedium
 	config.LogAttributes = make(map[string]any)
 	return config

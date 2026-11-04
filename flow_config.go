@@ -1,22 +1,15 @@
 package gush
 
 import (
-	"bytes"
-	"encoding/json"
 	"maps"
-	"reflect"
 	"slices"
 	"time"
 )
 
 // FlowConfig holds the settings of one flow run. Its JSON form is stable, so a config can
-// be queued and applied later with WithConfig. A field left out of the JSON keeps its
-// default, while a zero written out is taken as it is, so "max_attempts": 0 still
-// means unlimited. Waiting is not part of a config: whoever applies it chooses RunFlow or
-// StartFlow.
-//
-// Like time.Time, it decodes itself from JSON, so a struct that embeds it would decode
-// through that method and lose its own fields. Hold it in a named field to decode it.
+// be queued and applied later with WithConfig. A setting left out of the JSON, or zero,
+// uses its default, and "max_attempts": -1 means unlimited. Waiting is not part of a
+// config: whoever applies it chooses RunFlow or StartFlow.
 type FlowConfig struct {
 	CommonConfig
 
@@ -34,34 +27,10 @@ func DefaultFlowConfig() *FlowConfig {
 	config.InitialInterval = 1 * time.Second
 	config.BackoffCoefficient = 2.0
 	config.MaxInterval = 100 * time.Second
-	config.MaxAttempts = 1
+	config.MaxAttempts = defaultFlowAttempts
 	config.Priority = PriorityMedium
 	config.LogAttributes = make(map[string]any)
 	return config
-}
-
-// UnmarshalJSON starts an empty config from DefaultFlowConfig, because an attempt count left
-// out of the JSON would otherwise read as zero, which means unlimited retries. Priority
-// stays empty unless the JSON sets it, so that WithConfig keeps what a child flow inherits.
-// A config that already holds settings keeps those the JSON leaves out.
-func (config *FlowConfig) UnmarshalJSON(data []byte) error {
-	type plainFlowConfig FlowConfig
-	decoded := plainFlowConfig(*config)
-	if reflect.ValueOf(*config).IsZero() {
-		decoded = plainFlowConfig(*DefaultFlowConfig())
-		decoded.Priority = ""
-	}
-
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	err := decoder.Decode(&decoded)
-	if err != nil {
-		return err
-	}
-	resolveNumbers(decoded.LogAttributes)
-
-	*config = FlowConfig(decoded)
-	return nil
 }
 
 // Apply applies options to config in order.

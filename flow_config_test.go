@@ -243,26 +243,28 @@ func decodedConfig(t *testing.T, raw string) *gush.FlowConfig {
 	return config
 }
 
-func TestPartialJSONConfigKeepsTheDefaults(t *testing.T) {
-	config := decodedConfig(t, `{"id":"flow-1","priority":"high"}`)
-	defaults := gush.DefaultFlowConfig()
-
-	if config.ID != "flow-1" || config.Priority != gush.PriorityHigh {
-		t.Errorf("set fields = %q, %q", config.ID, config.Priority)
+// A struct holding a config beside its own fields, such as a queued message, decodes both.
+func TestAStructEmbeddingAConfigDecodesItsOwnFields(t *testing.T) {
+	type queuedFlow struct {
+		gush.FlowConfig
+		Tenant string `json:"tenant"`
 	}
-	if config.MaxAttempts != defaults.MaxAttempts {
-		t.Errorf("attempts = %d, want the default %d", config.MaxAttempts, defaults.MaxAttempts)
-	}
-	if config.InitialInterval != defaults.InitialInterval || config.MaxInterval != defaults.MaxInterval {
-		t.Errorf("intervals = %v, %v", config.InitialInterval, config.MaxInterval)
-	}
-}
+	raw := `{"id":"flow-1","max_attempts":3,"tenant":"acme","log_attributes":{"user_id":9007199254740993}}`
 
-func TestJSONConfigTakesAWrittenZero(t *testing.T) {
-	config := decodedConfig(t, `{"max_attempts":0}`)
+	var queued queuedFlow
+	err := gush.Decode([]byte(raw), &queued)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
 
-	if config.MaxAttempts != 0 {
-		t.Errorf("attempts = %d, want the written 0, which means unlimited", config.MaxAttempts)
+	if queued.Tenant != "acme" {
+		t.Errorf("tenant = %q", queued.Tenant)
+	}
+	if queued.ID != "flow-1" || queued.MaxAttempts != 3 {
+		t.Errorf("config = %q, %d", queued.ID, queued.MaxAttempts)
+	}
+	if queued.LogAttributes["user_id"] != int64(9007199254740993) {
+		t.Errorf("user_id = %v (%T)", queued.LogAttributes["user_id"], queued.LogAttributes["user_id"])
 	}
 }
 
@@ -325,6 +327,20 @@ func TestWithConfigOverridesWhatItSets(t *testing.T) {
 
 	if inherited.Priority != gush.PriorityLow || inherited.FairKey != "tenant-2" {
 		t.Errorf("scheduling = %q, %q", inherited.Priority, inherited.FairKey)
+	}
+}
+
+func TestJSONConfigMergesLogAttributes(t *testing.T) {
+	config := gush.DefaultFlowConfig()
+	config.LogAttributes["kept"] = "value"
+
+	err := gush.Decode([]byte(`{"log_attributes":{"added":1}}`), config)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	if config.LogAttributes["kept"] != "value" || config.LogAttributes["added"] != int64(1) {
+		t.Errorf("attributes = %v", config.LogAttributes)
 	}
 }
 

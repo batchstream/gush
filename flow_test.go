@@ -35,6 +35,41 @@ func TestRunFlowSendsNoRetryTypesToTemporal(t *testing.T) {
 	}
 }
 
+func TestJSONConfigRunsWithTheAttemptsItAsksFor(t *testing.T) {
+	tests := map[string]struct {
+		raw      string
+		expected int32
+	}{
+		"left out":  {raw: `{"id":"flow-1"}`, expected: 1},
+		"zero":      {raw: `{"max_attempts":0}`, expected: 1},
+		"a number":  {raw: `{"max_attempts":3}`, expected: 3},
+		"unlimited": {raw: `{"max_attempts":-1}`, expected: 0},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			config := &FlowConfig{}
+			err := Decode([]byte(test.raw), config)
+			if err != nil {
+				t.Fatalf("Decode() error = %v", err)
+			}
+
+			capture := &startCaptureClient{}
+			flowClient := &Client{temporalClient: capture}
+			request := FlowRequest{Queue: "queue", Flow: "handler"}
+			err = flowClient.RunFlow(context.Background(), request, WithConfig(config))
+			if !errors.Is(err, errStartCaptured) {
+				t.Fatalf("RunFlow() error = %v", err)
+			}
+
+			got := capture.options.RetryPolicy.MaximumAttempts
+			if got != test.expected {
+				t.Errorf("attempts sent to Temporal = %d, want %d", got, test.expected)
+			}
+		})
+	}
+}
+
 func TestStartFlowRejectsAFlowThatCannotRun(t *testing.T) {
 	flowClient := &Client{temporalClient: &startCaptureClient{}}
 

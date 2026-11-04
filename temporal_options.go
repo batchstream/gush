@@ -30,7 +30,7 @@ func newStartWorkflowOptions(queue string, config *FlowConfig) client.StartWorkf
 	options := client.StartWorkflowOptions{
 		ID:                       config.ID,
 		TaskQueue:                queue,
-		RetryPolicy:              config.temporalPolicy(),
+		RetryPolicy:              config.temporalPolicy(defaultFlowAttempts),
 		Priority:                 newTemporalPriority(&config.CommonConfig),
 		WorkflowExecutionTimeout: config.Timeout,
 	}
@@ -41,7 +41,7 @@ func newChildWorkflowOptions(queue string, config *FlowConfig) workflow.ChildWor
 	options := workflow.ChildWorkflowOptions{
 		WorkflowID:               config.ID,
 		TaskQueue:                queue,
-		RetryPolicy:              config.temporalPolicy(),
+		RetryPolicy:              config.temporalPolicy(defaultFlowAttempts),
 		Priority:                 newTemporalPriority(&config.CommonConfig),
 		WorkflowExecutionTimeout: config.Timeout,
 		VersioningIntent:         defaultCommandVersioningIntent(),
@@ -57,11 +57,12 @@ func newDetachedChildWorkflowOptions(queue string, config *FlowConfig) workflow.
 }
 
 func newActivityOptions(config *StepConfig) workflow.ActivityOptions {
+	retryPolicy := config.temporalPolicy(defaultStepAttempts)
 	options := workflow.ActivityOptions{
 		TaskQueue:           config.Queue,
 		StartToCloseTimeout: config.AttemptTimeout,
 		HeartbeatTimeout:    config.HeartbeatTimeout,
-		RetryPolicy:         config.temporalPolicy(),
+		RetryPolicy:         retryPolicy,
 		Priority:            newTemporalPriority(&config.CommonConfig),
 		VersioningIntent:    defaultCommandVersioningIntent(),
 		WaitForCancellation: config.WaitForCancel,
@@ -73,9 +74,11 @@ func newActivityOptions(config *StepConfig) workflow.ActivityOptions {
 		// The overall limit stops a task lingering once no worker is left. It must not cut
 		// retries short, so it covers every attempt's pickup wait and run plus the delays
 		// between them. Unlimited attempts have no such total, so they get no overall limit.
-		if config.MaxAttempts > 0 {
+		if retryPolicy.MaximumAttempts > 0 {
+			resolved := config.RetryPolicy
+			resolved.MaxAttempts = retryPolicy.MaximumAttempts
 			perAttempt := config.PickupTimeout + config.AttemptTimeout
-			options.ScheduleToCloseTimeout = time.Duration(config.MaxAttempts)*perAttempt + config.totalBackoff()
+			options.ScheduleToCloseTimeout = time.Duration(resolved.MaxAttempts)*perAttempt + resolved.totalBackoff()
 		}
 	}
 	return options

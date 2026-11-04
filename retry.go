@@ -6,7 +6,17 @@ import (
 	"go.temporal.io/sdk/temporal"
 )
 
-// RetryPolicy defines how flows and steps are retried after they fail.
+// UnlimitedAttempts as MaxAttempts keeps retrying until something else ends the run, such as
+// a timeout.
+const UnlimitedAttempts int32 = -1
+
+const (
+	defaultFlowAttempts int32 = 1
+	defaultStepAttempts int32 = 10
+)
+
+// RetryPolicy defines how flows and steps are retried after they fail. Every setting left
+// at zero uses its default.
 type RetryPolicy struct {
 	// InitialInterval is the delay before the first retry. Zero means 1s.
 	InitialInterval time.Duration `json:"initial_interval"`
@@ -18,8 +28,8 @@ type RetryPolicy struct {
 	// MaxInterval caps the delay between retries. Zero means 100 times InitialInterval.
 	MaxInterval time.Duration `json:"max_interval"`
 
-	// MaxAttempts is the total number of attempts, including the first. Zero means
-	// unlimited.
+	// MaxAttempts is the total number of attempts, including the first. Zero means one for
+	// a flow and ten for a step. Use UnlimitedAttempts to keep retrying.
 	MaxAttempts int32 `json:"max_attempts"`
 
 	// NoRetry lists the ApplicationError types that fail immediately.
@@ -56,12 +66,18 @@ func (policy RetryPolicy) totalBackoff() time.Duration {
 	return total
 }
 
-func (policy RetryPolicy) temporalPolicy() *temporal.RetryPolicy {
+// temporalPolicy returns the policy Temporal runs, which reads zero attempts as unlimited.
+func (policy RetryPolicy) temporalPolicy(defaultAttempts int32) *temporal.RetryPolicy {
+	attempts := policy.MaxAttempts
+	if attempts == 0 {
+		attempts = defaultAttempts
+	}
+
 	temporalPolicy := &temporal.RetryPolicy{
 		InitialInterval:        policy.InitialInterval,
 		BackoffCoefficient:     policy.BackoffCoefficient,
 		MaximumInterval:        policy.MaxInterval,
-		MaximumAttempts:        policy.MaxAttempts,
+		MaximumAttempts:        max(attempts, 0),
 		NonRetryableErrorTypes: policy.NoRetry,
 	}
 	return temporalPolicy

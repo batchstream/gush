@@ -143,7 +143,7 @@ A step that is already running only finds out about the cancellation through `ct
 
 | Option | Applies to | Effect |
 |---|---|---|
-| `WithMaxAttempts(n)` | both | Total attempts, including the first. Zero means unlimited. |
+| `WithMaxAttempts(n)` | both | Total attempts, including the first. Zero means the default, and `gush.UnlimitedAttempts` keeps retrying. |
 | `WithInitialInterval(d)` | both | Delay before the first retry. |
 | `WithBackoffCoefficient(f)` | both | Multiplier on the delay after each retry. |
 | `WithMaxInterval(d)` | both | Cap on the delay between retries. |
@@ -156,7 +156,7 @@ A step that is already running only finds out about the cancellation through `ct
 | `WithLogAttributes(m)` | both | The same, for several attributes. |
 | `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's input, and a child flow gets an error. |
 | `WithTimeout(d)` | flow | Limit on the whole execution, including every retry. |
-| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Fields left out of the JSON keep their defaults. Whoever applies it chooses `RunFlow` or `StartFlow`. |
+| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Settings left out of the JSON, or zero, use their defaults. Whoever applies it chooses `RunFlow` or `StartFlow`. |
 | `WithQueue(q)` | step | Runs on another queue. |
 | `WithAttemptTimeout(d)` | step | Limit on each attempt, not the step as a whole. |
 | `WithHeartbeatTimeout(d)` | step | Fails an attempt that stops calling `ctx.Heartbeat()`. |

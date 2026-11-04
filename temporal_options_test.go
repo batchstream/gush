@@ -106,12 +106,34 @@ func TestPickupTimeoutDoesNotCutRetriesShort(t *testing.T) {
 func TestPickupTimeoutWithUnlimitedAttemptsHasNoOverallLimit(t *testing.T) {
 	config := DefaultStepConfig()
 	config.PickupTimeout = time.Minute
-	config.MaxAttempts = 0
+	config.MaxAttempts = UnlimitedAttempts
 
 	options := newActivityOptions(config)
 
 	if options.ScheduleToCloseTimeout != 0 {
 		t.Errorf("schedule to close = %v", options.ScheduleToCloseTimeout)
+	}
+	if options.RetryPolicy.MaximumAttempts != 0 {
+		t.Errorf("attempts sent to Temporal = %d", options.RetryPolicy.MaximumAttempts)
+	}
+}
+
+func TestZeroAttemptsMeansTheDefaultOnAStep(t *testing.T) {
+	withDefault := DefaultStepConfig()
+	withDefault.PickupTimeout = time.Minute
+
+	zero := DefaultStepConfig()
+	zero.PickupTimeout = time.Minute
+	zero.MaxAttempts = 0
+
+	expected := newActivityOptions(withDefault)
+	options := newActivityOptions(zero)
+
+	if options.RetryPolicy.MaximumAttempts != defaultStepAttempts {
+		t.Errorf("attempts sent to Temporal = %d", options.RetryPolicy.MaximumAttempts)
+	}
+	if options.ScheduleToCloseTimeout != expected.ScheduleToCloseTimeout {
+		t.Errorf("schedule to close = %v, want %v", options.ScheduleToCloseTimeout, expected.ScheduleToCloseTimeout)
 	}
 }
 
