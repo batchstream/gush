@@ -685,7 +685,8 @@ func TestVersionStopsAnExecutionBelowTheMinimum(t *testing.T) {
 	defer cancel()
 	err = testClient.RunFlow(waiting, flowRequest(RaisedVersionFlow, nil, nil), gush.WithID(flowID))
 
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Error(t, err)
+	require.ErrorIs(t, waiting.Err(), context.DeadlineExceeded, "the flow ended instead of stopping: %v", err)
 	flow, err := testClient.GetFlow(ctx, flowID)
 	require.NoError(t, err)
 	assert.Equal(t, "Running", flow.Status)
