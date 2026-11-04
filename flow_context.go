@@ -214,7 +214,7 @@ func executeChildFlow(ctx workflow.Context, request FlowRequest, config *FlowCon
 //
 // To replace a step:
 //
-//	v := ctx.Version("payment-provider", 1)
+//	v := ctx.Version("payment-provider", gush.DefaultFlowVersion, 1)
 //	if v == gush.DefaultFlowVersion {
 //	    err = ctx.RunStep(OldCharge, input, &output)
 //	} else {
@@ -222,12 +222,12 @@ func executeChildFlow(ctx workflow.Context, request FlowRequest, config *FlowCon
 //	}
 //
 // To change the same code again, keep the tag, raise maxVersion and add a branch. Once no
-// execution can reach an old branch, delete it but keep the Version call. Version accepts
-// every recorded version, so a stale execution would then run the newer branch. To make one
-// fail instead, call the SDK's workflow.GetVersion with a higher minimum.
-func (flowCtx *FlowContext) Version(tag string, maxVersion int) int {
-	minSupported := workflow.Version(DefaultFlowVersion)
-	version := workflow.GetVersion(flowCtx.Context, tag, minSupported, workflow.Version(maxVersion))
+// execution can reach an old branch, delete it, keep the Version call and raise minVersion
+// to the oldest version left. An execution that recorded an older version then stops making
+// progress, with its flow tasks failing, until code that supports it is deployed. It never
+// runs a branch it did not take.
+func (flowCtx *FlowContext) Version(tag string, minVersion, maxVersion int) int {
+	version := workflow.GetVersion(flowCtx.Context, tag, workflow.Version(minVersion), workflow.Version(maxVersion))
 	return int(version)
 }
 

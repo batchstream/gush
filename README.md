@@ -106,7 +106,7 @@ err := ctx.RunFlow(request)
 
 Flows and steps are registered under their bare Go function names, and can be called by that name as a string. Two functions with the same name in different packages collide, and `Serve` reports it. Use `NewFlowHandler` and `NewStepHandler` to choose a name, which closures and the instantiations of a generic function need too.
 
-`string` and `[]byte` travel as raw bytes and everything else as JSON, so read a value back as the type it was written.
+Strings and byte slices, including types built on them, travel as raw bytes unless the type has its own JSON or text methods. Everything else travels as JSON, so read a value back as the type it was written.
 
 ### Parallel steps and cleanup
 
@@ -234,7 +234,7 @@ An error passed to `Resume` fails the step for good, so a rejection does not sen
 Flows can run for a long time, and a replay must take the same path it took originally. `Version` keeps old executions on the old code.
 
 ```go
-v := ctx.Version("payment-provider", 1)
+v := ctx.Version("payment-provider", gush.DefaultFlowVersion, 1)
 if v == gush.DefaultFlowVersion {
     err = ctx.RunStep(OldCharge, input, &output)
 } else {
@@ -242,7 +242,7 @@ if v == gush.DefaultFlowVersion {
 }
 ```
 
-`Version` accepts every recorded version, so once an old branch is deleted, an execution that recorded it runs the newer one. To make such an execution fail instead, call the SDK's `workflow.GetVersion` with a higher minimum.
+The second argument is the oldest version the code still supports. Once no execution can reach an old branch, delete it and raise that minimum, here with `ctx.Version("payment-provider", 1, 1)`. An execution that recorded something older then stops making progress, with its flow tasks failing, until code that supports it is deployed. It never runs a branch it did not take.
 
 ## Long-running flows
 

@@ -87,7 +87,7 @@ func runWithTemporal(m *testing.M) int {
 			WrappingFlow, ParallelFlow, CleanupFlow, CountdownFlow, AttributeEchoFlow, CancelOneStepFlow, ChargeThenRefundFlow,
 			DetachingParentFlow, DetailReadingFlow, AttributeRecordingFlow, InheritingDetachingParentFlow,
 			CanceledDetachingFlow, HoldingEchoFlow, InvalidChildStartFlow, DuplicateChildStartFlow,
-			IdleFlow, IdleDetachingParentFlow, UnpolledChildStartFlow, RetriableApprovalFlow).
+			IdleFlow, IdleDetachingParentFlow, UnpolledChildStartFlow, RetriableApprovalFlow, RaisedVersionFlow).
 		WithSteps(DoubleStep, FailingStep, PlainFailureStep, AbortStep, ApprovalStep, SlowStep, HeartbeatStep, SilentStep,
 			PurgeCacheStep, AttributesStep, InheritanceStep, WrappedAbortStep, DecliningStep, CleanupStep, AttributeEchoStep, ChargingStep, RefundStep, DetailedStep).
 		WithContext(serveContext)
@@ -655,7 +655,7 @@ func TestOverlongFairKeyIsCutToFit(t *testing.T) {
 }
 
 func VersionFlow(ctx *gush.FlowContext) (any, error) {
-	return ctx.Version("change", 2), nil
+	return ctx.Version("change", gush.DefaultFlowVersion, 2), nil
 }
 
 func TestVersionReturnsTheCurrentVersionForNewFlows(t *testing.T) {
@@ -665,6 +665,30 @@ func TestVersionReturnsTheCurrentVersionForNewFlows(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 2, output)
+}
+
+// RaisedVersionFlow records version 1 and then requires 2, as code does after deleting the
+// branch an execution already took.
+func RaisedVersionFlow(ctx *gush.FlowContext) (any, error) {
+	ctx.Version("raised", gush.DefaultFlowVersion, 1)
+	return ctx.Version("raised", 2, 2), nil
+}
+
+func TestVersionStopsAnExecutionBelowTheMinimum(t *testing.T) {
+	ctx := testContext(t)
+	flowID := uniqueKey(t)
+	_, err := testClient.StartFlow(ctx, flowRequest(RaisedVersionFlow, nil, nil), gush.WithID(flowID))
+	require.NoError(t, err)
+	defer func() { _ = testClient.TerminateFlow(ctx, flowID, "test") }()
+
+	waiting, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	err = testClient.RunFlow(waiting, flowRequest(RaisedVersionFlow, nil, nil), gush.WithID(flowID))
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	flow, err := testClient.GetFlow(ctx, flowID)
+	require.NoError(t, err)
+	assert.Equal(t, "Running", flow.Status)
 }
 
 func SmallFlow(*gush.FlowContext) (any, error) {
