@@ -227,7 +227,7 @@ err = client.Resume(ctx, resumeToken, decision, nil)
 
 **Set `WithAttemptTimeout` to the longest acceptable wait.** The step's timeout keeps running while it is suspended, and when it expires the step retries and runs its code again, sending a second request. The default is 2 minutes and 10 attempts. Use `WithMaxAttempts(1)` unless running the code twice is safe.
 
-An error passed to `Resume` counts as a failed attempt, so a plain error runs the code again too. To reject for good, pass `gush.NewPermanentError("rejected", "Rejected", nil)`.
+An error passed to `Resume` fails the step for good, so a rejection does not send the request again. To run the code again under the step's retry policy, pass a `gush.NewApplicationError`.
 
 ## Changing running flows
 

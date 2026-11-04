@@ -87,7 +87,7 @@ func runWithTemporal(m *testing.M) int {
 			WrappingFlow, ParallelFlow, CleanupFlow, CountdownFlow, AttributeEchoFlow, CancelOneStepFlow, ChargeThenRefundFlow,
 			DetachingParentFlow, DetailReadingFlow, AttributeRecordingFlow, InheritingDetachingParentFlow,
 			CanceledDetachingFlow, HoldingEchoFlow, InvalidChildStartFlow, DuplicateChildStartFlow,
-			IdleFlow, IdleDetachingParentFlow, UnpolledChildStartFlow).
+			IdleFlow, IdleDetachingParentFlow, UnpolledChildStartFlow, RetriableApprovalFlow).
 		WithSteps(DoubleStep, FailingStep, PlainFailureStep, AbortStep, ApprovalStep, SlowStep, HeartbeatStep, SilentStep,
 			PurgeCacheStep, AttributesStep, InheritanceStep, WrappedAbortStep, DecliningStep, CleanupStep, AttributeEchoStep, ChargingStep, RefundStep, DetailedStep).
 		WithContext(serveContext)
@@ -380,6 +380,16 @@ func ApprovalFlow(ctx *gush.FlowContext) (any, error) {
 	err := ctx.RunStep(ApprovalStep, string(ctx.Input), &decision,
 		gush.WithAttemptTimeout(30*time.Second),
 		gush.WithMaxAttempts(1),
+	)
+	return decision, err
+}
+
+func RetriableApprovalFlow(ctx *gush.FlowContext) (any, error) {
+	var decision string
+	err := ctx.RunStep(ApprovalStep, string(ctx.Input), &decision,
+		gush.WithAttemptTimeout(30*time.Second),
+		gush.WithInitialInterval(time.Millisecond),
+		gush.WithMaxAttempts(2),
 	)
 	return decision, err
 }
@@ -1466,6 +1476,43 @@ func TestWaitForCancelHoldsCleanupUntilTheStepEnds(t *testing.T) {
 		return err == nil && flow.Status == "Completed"
 	}, 15*time.Second, 100*time.Millisecond)
 	assert.EqualValues(t, 1, attemptsOf(key+"-seen").Load(), "the refund started before the charge ended")
+}
+
+func TestResumeWithAPlainErrorEndsTheStep(t *testing.T) {
+	ctx := testContext(t)
+	key := uniqueKey(t)
+
+	result := make(chan error, 1)
+	go func() { result <- testClient.RunFlow(ctx, flowRequest(RetriableApprovalFlow, key, nil)) }()
+
+	token := <-resumeTokens
+	require.NoError(t, testClient.Resume(ctx, token, nil, errors.New("rejected by reviewer")))
+
+	err := <-result
+	require.Error(t, err)
+	assert.True(t, gush.IsPermanentError(err), "%v", err)
+	assert.Equal(t, "[StepAborted] rejected by reviewer", err.Error())
+	assert.EqualValues(t, 1, attemptsOf(key).Load())
+}
+
+func TestResumeWithAnApplicationErrorRunsTheStepAgain(t *testing.T) {
+	ctx := testContext(t)
+	key := uniqueKey(t)
+
+	var decision string
+	result := make(chan error, 1)
+	go func() { result <- testClient.RunFlow(ctx, flowRequest(RetriableApprovalFlow, key, &decision)) }()
+
+	token := <-resumeTokens
+	retry := gush.NewApplicationError("ask again", "AskAgain")
+	require.NoError(t, testClient.Resume(ctx, token, nil, retry))
+
+	token = <-resumeTokens
+	require.NoError(t, testClient.Resume(ctx, token, "approved", nil))
+
+	require.NoError(t, <-result)
+	assert.Equal(t, "approved", decision)
+	assert.EqualValues(t, 2, attemptsOf(key).Load())
 }
 
 func TestResumeKeepsAWrappedErrorsType(t *testing.T) {

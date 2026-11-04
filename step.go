@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"go.temporal.io/api/serviceerror"
+	"go.temporal.io/sdk/temporal"
 )
 
 // errInvalidResumeToken marks a token that could not be decoded.
@@ -62,8 +63,9 @@ type StepInfo struct {
 // Resume finishes a suspended step with a result or, if stepErr is set, an error. See
 // StepContext.Suspend.
 //
-// An error counts as a failed attempt, so a retryable one runs the step's code again under
-// its retry policy. Pass a NewPermanentError to fail the step for good.
+// An error fails the step for good, because running its code again would repeat whatever
+// it asked for, such as a person's approval. To run the code again under the step's retry
+// policy, pass a NewApplicationError, which is a request to retry.
 func (c *Client) Resume(ctx context.Context, resumeToken string, result any, stepErr error) error {
 	token, err := decodeResumeToken(resumeToken)
 	if err != nil {
@@ -73,7 +75,20 @@ func (c *Client) Resume(ctx context.Context, resumeToken string, result any, ste
 	if err != nil {
 		return err
 	}
-	return c.temporalClient.CompleteActivity(ctx, token, payload, temporalError(stepErr))
+	return c.temporalClient.CompleteActivity(ctx, token, payload, resumeError(stepErr))
+}
+
+// resumeError returns what Temporal records for the error passed to Resume. An
+// ApplicationError says for itself whether to retry and a canceled error cancels the step.
+// Anything else ends the step like Abort.
+func resumeError(err error) error {
+	if err == nil || temporal.IsApplicationError(err) {
+		return temporalError(err)
+	}
+	if temporal.IsCanceledError(err) || errors.Is(err, context.Canceled) {
+		return err
+	}
+	return abortError(abortedStepErrorType, []error{err})
 }
 
 // IsResumeTokenError reports whether Resume failed because its token is invalid or the

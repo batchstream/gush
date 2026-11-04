@@ -1,8 +1,10 @@
 package gush
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"go.temporal.io/api/enums/v1"
@@ -278,4 +280,49 @@ func TestAbortKeepsTheMessageReadable(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResumeError(t *testing.T) {
+	t.Run("no error stays nil", func(t *testing.T) {
+		if err := resumeError(nil); err != nil {
+			t.Errorf("resumeError(nil) = %v", err)
+		}
+	})
+
+	t.Run("a plain error ends the step", func(t *testing.T) {
+		got := resumeError(errors.New("rejected"))
+
+		if !IsPermanentError(got) {
+			t.Errorf("resumeError() = %v, want a permanent error", got)
+		}
+		if got.Error() == "" || !strings.Contains(got.Error(), "rejected") {
+			t.Errorf("resumeError() lost the message: %v", got)
+		}
+	})
+
+	t.Run("an application error keeps its retryability", func(t *testing.T) {
+		retry := NewApplicationError("ask again", "AskAgain")
+		if got := resumeError(retry); !IsApplicationError(got) || IsPermanentError(got) {
+			t.Errorf("resumeError(retryable) = %v", got)
+		}
+
+		wrapped := fmt.Errorf("reviewer: %w", retry)
+		if got := resumeError(wrapped); !IsApplicationError(got) || IsPermanentError(got) {
+			t.Errorf("resumeError(wrapped retryable) = %v", got)
+		}
+
+		permanent := NewPermanentError("no", "No", nil)
+		if got := resumeError(permanent); !IsPermanentError(got) {
+			t.Errorf("resumeError(permanent) = %v", got)
+		}
+	})
+
+	t.Run("a canceled error cancels the step", func(t *testing.T) {
+		canceled := temporal.NewCanceledError()
+		for _, err := range []error{canceled, context.Canceled} {
+			if got := resumeError(err); !errors.Is(got, err) {
+				t.Errorf("resumeError(%v) = %v", err, got)
+			}
+		}
+	})
 }
