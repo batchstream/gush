@@ -21,7 +21,7 @@ The SDK stays within reach: `ctx.Context` in a flow is the SDK's own `workflow.C
 
 ## Install
 
-Requires Go 1.27.3.
+Requires Go 1.27.
 
 ```sh
 go get github.com/batchstream/gush
