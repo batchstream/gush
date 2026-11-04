@@ -328,8 +328,8 @@ func TestResumeError(t *testing.T) {
 	t.Run("a canceled error cancels the step", func(t *testing.T) {
 		canceled := temporal.NewCanceledError()
 		for _, err := range []error{canceled, context.Canceled} {
-			if got := resumeError(err); !errors.Is(got, err) {
-				t.Errorf("resumeError(%v) = %v", err, got)
+			if got := resumeError(err); got != err {
+				t.Errorf("resumeError(%v) = %v, want it unchanged", err, got)
 			}
 		}
 	})

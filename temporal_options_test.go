@@ -118,6 +118,23 @@ func TestPickupTimeoutWithUnlimitedAttemptsHasNoOverallLimit(t *testing.T) {
 	}
 }
 
+func TestZeroAttemptsMeansTheDefaultOnAFlow(t *testing.T) {
+	config := DefaultFlowConfig()
+	config.MaxAttempts = 0
+
+	policies := map[string]*temporal.RetryPolicy{
+		"flow start":     newStartWorkflowOptions("queue", config).RetryPolicy,
+		"child flow":     newChildWorkflowOptions("queue", config).RetryPolicy,
+		"detached child": newDetachedChildWorkflowOptions("queue", config).RetryPolicy,
+	}
+
+	for path, got := range policies {
+		if got.MaximumAttempts != defaultFlowAttempts {
+			t.Errorf("%s: attempts sent to Temporal = %d", path, got.MaximumAttempts)
+		}
+	}
+}
+
 func TestZeroAttemptsMeansTheDefaultOnAStep(t *testing.T) {
 	withDefault := DefaultStepConfig()
 	withDefault.PickupTimeout = time.Minute
