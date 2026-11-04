@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -155,9 +156,35 @@ func assertCollected(t *testing.T, collected *collectedLogs, body string) {
 	assert.Equal(t, "flow-123", attributes["flow_id"])
 }
 
+// unconfiguredLogProvider is the global provider these tests start with and restore.
+var unconfiguredLogProvider = global.GetLoggerProvider()
+
 func TestImportLeavesTheGlobalProviderAlone(t *testing.T) {
 	assert.Same(t, unconfiguredLogProvider, global.GetLoggerProvider())
 	assert.Contains(t, fmt.Sprintf("%T", global.GetLoggerProvider()), "global.")
+}
+
+// A host's provider may be set before gush's package variables are initialized, so the
+// placeholder is recognized by its type. This fails if OpenTelemetry moves that type.
+func TestLogProviderConfiguredRecognizesThePlaceholder(t *testing.T) {
+	assert.False(t, logProviderConfigured(unconfiguredLogProvider))
+
+	host := sdklog.NewLoggerProvider()
+	assert.True(t, logProviderConfigured(host))
+}
+
+func TestTimeEndUsesTheLoggersClock(t *testing.T) {
+	hostLogs := captureHostLogs(t)
+
+	current := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	logger := NewLogger()
+	logger.now = func() time.Time { return current }
+
+	logger.Time("step")
+	current = current.Add(2 * time.Second)
+	logger.TimeEnd("step")
+
+	assert.Contains(t, hostLogs.bodies(), "step: 2s")
 }
 
 func TestExportsOverHTTP(t *testing.T) {
@@ -237,7 +264,7 @@ func TestGRPCEndpointWinsOverHTTP(t *testing.T) {
 	assert.False(t, reachedHTTP)
 }
 
-func TestLegacyAliasWinsOverHTTPEndpoint(t *testing.T) {
+func TestHTTPEndpointWinsOverItsDeprecatedAlias(t *testing.T) {
 	clearLogEnv(t)
 	legacy, legacyCollected, _ := startHTTPCollector(t)
 	current, currentCollected, _ := startHTTPCollector(t)
@@ -246,9 +273,9 @@ func TestLegacyAliasWinsOverHTTPEndpoint(t *testing.T) {
 
 	exportOneRecord(t, "alias precedence")
 
-	assertCollected(t, legacyCollected, "alias precedence")
-	_, reachedCurrent := currentCollected.attributesOf("alias precedence")
-	assert.False(t, reachedCurrent)
+	assertCollected(t, currentCollected, "alias precedence")
+	_, reachedLegacy := legacyCollected.attributesOf("alias precedence")
+	assert.False(t, reachedLegacy)
 }
 
 func TestRejectsAnHTTPEndpointThatIsNotAURL(t *testing.T) {

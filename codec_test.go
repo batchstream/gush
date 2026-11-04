@@ -304,27 +304,27 @@ func TestEncodeHonorsPointerReceiverMarshaler(t *testing.T) {
 func TestPayloadRoundTrip(t *testing.T) {
 	input := map[string]int{"a": 1}
 
-	payload, err := encodePayload(input)
+	payload, err := EncodePayload(input)
 	require.NoError(t, err)
 	require.NotEqual(t, `{"a":1}`, string(payload))
 
 	var output map[string]int
-	require.NoError(t, decodePayload(payload, &output))
+	require.NoError(t, DecodePayload(payload, &output))
 	require.Equal(t, input, output)
 }
 
 func TestDecodePayloadLeavesTargetAloneWhenEmpty(t *testing.T) {
 	output := "unchanged"
 
-	require.NoError(t, decodePayload(nil, &output))
+	require.NoError(t, DecodePayload(nil, &output))
 	require.Equal(t, "unchanged", output)
-	require.NoError(t, decodePayload(nil, nil))
+	require.NoError(t, DecodePayload(nil, nil))
 }
 
 func TestDecodePayloadRejectsCorruptData(t *testing.T) {
 	var output string
 
-	require.Error(t, decodePayload([]byte("not zstd"), &output))
+	require.Error(t, DecodePayload([]byte("not zstd"), &output))
 }
 
 func TestResumeTokenRoundTrip(t *testing.T) {
@@ -334,4 +334,32 @@ func TestResumeTokenRoundTrip(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, token, decoded)
+}
+
+func TestEncodeFollowsAPointerToAny(t *testing.T) {
+	var holder any = "abc"
+	result, err := Encode(&holder)
+	require.NoError(t, err)
+	require.Equal(t, "abc", string(result))
+
+	holder = []byte("raw")
+	result, err = Encode(&holder)
+	require.NoError(t, err)
+	require.Equal(t, "raw", string(result))
+
+	holder = map[string]int{"a": 1}
+	result, err = Encode(&holder)
+	require.NoError(t, err)
+	require.Equal(t, `{"a":1}`, string(result))
+}
+
+func TestDecodeIntoAny(t *testing.T) {
+	var output any
+
+	require.NoError(t, Decode([]byte("hello"), &output))
+	require.Equal(t, "hello", output)
+
+	require.NoError(t, Decode([]byte(`{"a":1}`), &output))
+	expected := map[string]any{"a": 1.0}
+	require.Equal(t, expected, output)
 }

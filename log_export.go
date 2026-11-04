@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -21,9 +22,19 @@ const (
 	logShutdownTimeout     = 30 * time.Second
 )
 
-// unconfiguredLogProvider is OpenTelemetry's global LoggerProvider before anyone sets one.
-// Comparing against it tells whether the host has configured logging.
-var unconfiguredLogProvider = global.GetLoggerProvider()
+// otelPlaceholderPackage holds the type of OpenTelemetry's global LoggerProvider before
+// anyone sets one. Package order decides whether a host's init runs before gush's, so the
+// placeholder has to be recognized by type rather than remembered at startup.
+const otelPlaceholderPackage = "go.opentelemetry.io/otel/log/internal/global"
+
+// logProviderConfigured reports whether a LoggerProvider has been set as the global one.
+func logProviderConfigured(provider log.LoggerProvider) bool {
+	providerType := reflect.TypeOf(provider)
+	if providerType == nil || providerType.Kind() != reflect.Pointer {
+		return true
+	}
+	return providerType.Elem().PkgPath() != otelPlaceholderPackage
+}
 
 var stderrLogEmitter = sync.OnceValue(func() log.Logger {
 	processor := sdklog.NewSimpleProcessor(NewStderrLogExporter())
@@ -35,7 +46,7 @@ var stderrLogEmitter = sync.OnceValue(func() log.Logger {
 // logging was configured still reaches the configured destination.
 func activeLogEmitter() log.Logger {
 	provider := global.GetLoggerProvider()
-	if provider == unconfiguredLogProvider {
+	if !logProviderConfigured(provider) {
 		return stderrLogEmitter()
 	}
 	return provider.Logger(logInstrumentationName)
@@ -44,6 +55,7 @@ func activeLogEmitter() log.Logger {
 var logExport struct {
 	mu       sync.Mutex
 	provider *sdklog.LoggerProvider
+	previous log.LoggerProvider
 	users    int
 }
 
@@ -55,8 +67,8 @@ var logExport struct {
 //
 //   - OTEL_ENDPOINT: OTLP/gRPC. A bare host:port is plaintext, and a URL's scheme chooses:
 //     https means TLS.
-//   - TRACING_HTTP_ENDPOINT, a legacy alias of OTEL_HTTP_ENDPOINT.
 //   - OTEL_HTTP_ENDPOINT: OTLP/HTTP, as an http:// or https:// URL. Logs go to /v1/logs.
+//   - TRACING_HTTP_ENDPOINT, a deprecated alias of OTEL_HTTP_ENDPOINT.
 //   - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT: the standard
 //     OpenTelemetry variables, including their protocol, header and TLS settings.
 //
@@ -74,7 +86,8 @@ func InitLogExport() (shutdown func(), err error) {
 		logExport.users++
 		return sync.OnceFunc(releaseLogExport), nil
 	}
-	if global.GetLoggerProvider() != unconfiguredLogProvider {
+	current := global.GetLoggerProvider()
+	if logProviderConfigured(current) {
 		return func() {}, nil
 	}
 
@@ -88,6 +101,7 @@ func InitLogExport() (shutdown func(), err error) {
 
 	processor := sdklog.NewBatchProcessor(exporter)
 	logExport.provider = sdklog.NewLoggerProvider(sdklog.WithProcessor(processor))
+	logExport.previous = current
 	logExport.users = 1
 	global.SetLoggerProvider(logExport.provider)
 
@@ -108,7 +122,7 @@ func releaseLogExport() {
 	provider := logExport.provider
 	logExport.provider = nil
 	if global.GetLoggerProvider() == provider {
-		global.SetLoggerProvider(unconfiguredLogProvider)
+		global.SetLoggerProvider(logExport.previous)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), logShutdownTimeout)
@@ -126,7 +140,7 @@ func newLogExporterFromEnv(ctx context.Context) (sdklog.Exporter, error) {
 		return newGRPCLogExporter(ctx, grpcEndpoint)
 	}
 
-	httpEndpoint := firstEnv(envLogHTTPEndpointLegacy, envLogHTTPEndpoint)
+	httpEndpoint := firstEnv(envLogHTTPEndpoint, envLogHTTPEndpointLegacy)
 	if httpEndpoint != "" {
 		return newHTTPLogExporter(ctx, httpEndpoint)
 	}

@@ -2,6 +2,7 @@ package gush
 
 import (
 	"errors"
+	"strings"
 
 	"go.temporal.io/sdk/temporal"
 )
@@ -59,16 +60,44 @@ func (e *programError) Unwrap() error {
 	return e.appErr
 }
 
-// temporalError returns the error a flow or step hands back to Temporal. An error that
-// came straight from unwrapError is swapped for its ApplicationError, so the recorded
-// failure keeps the type and retryability instead of becoming an untyped, retryable
-// error. Wrapped errors are left alone to keep the caller's message.
+// temporalError returns the error a flow or step hands back to Temporal, which only reads
+// the type and retryability of an ApplicationError it is given directly. Anything else
+// would be recorded as an untyped, retryable error, so an ApplicationError found inside a
+// wrapped error is passed on as one that keeps the wrapper's message.
 func temporalError(err error) error {
 	programErr, ok := err.(*programError)
 	if ok {
 		return programErr.appErr
 	}
-	return err
+
+	var appErr *ApplicationError
+	if !errors.As(err, &appErr) {
+		return err
+	}
+	switch err.(type) {
+	case *ApplicationError, *temporal.ActivityError, *temporal.ChildWorkflowExecutionError:
+		return err
+	}
+
+	options := temporal.ApplicationErrorOptions{
+		NonRetryable:   appErr.NonRetryable(),
+		Cause:          appErr,
+		NextRetryDelay: appErr.NextRetryDelay(),
+		Category:       appErr.Category(),
+	}
+	return temporal.NewApplicationErrorWithOptions(wrappedMessage(err, appErr), appErr.Type(), options)
+}
+
+// wrappedMessage returns err's text with the wrapped error reduced to its plain message,
+// because the type is recorded separately and would otherwise appear twice.
+func wrappedMessage(err error, appErr *ApplicationError) string {
+	message := strings.Replace(err.Error(), appErr.Error(), appErr.Message(), 1)
+
+	var programErr *programError
+	if errors.As(err, &programErr) {
+		message = strings.Replace(message, programErr.message, appErr.Message(), 1)
+	}
+	return message
 }
 
 // unwrapError extracts the program's own error from Temporal's error chain, which

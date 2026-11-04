@@ -83,11 +83,11 @@ func TestUnwrapError(t *testing.T) {
 func TestUnwrapErrorKeepsApplicationError(t *testing.T) {
 	t.Run("non-retryable error stays detectable", func(t *testing.T) {
 		cause := errors.New("boom")
-		appErr := NewPermanentError("boom", "ActionAborted", cause)
+		appErr := NewPermanentError("boom", "StepAborted", cause)
 		wrapped := fmt.Errorf("activity error (type: RunJob, scheduledEventID: 5): %w", appErr)
 		got := unwrapError(wrapped)
-		if got.Error() != "[ActionAborted] boom" {
-			t.Errorf("unwrapError = %q, want %q", got.Error(), "[ActionAborted] boom")
+		if got.Error() != "[StepAborted] boom" {
+			t.Errorf("unwrapError = %q, want %q", got.Error(), "[StepAborted] boom")
 		}
 		if !IsApplicationError(got) {
 			t.Error("IsApplicationError = false, want true")
@@ -96,8 +96,8 @@ func TestUnwrapErrorKeepsApplicationError(t *testing.T) {
 			t.Error("IsPermanentError = false, want true")
 		}
 		var target *ApplicationError
-		if !errors.As(got, &target) || target.Type() != "ActionAborted" {
-			t.Errorf("errors.As found %v, want type ActionAborted", target)
+		if !errors.As(got, &target) || target.Type() != "StepAborted" {
+			t.Errorf("errors.As found %v, want type StepAborted", target)
 		}
 		if !errors.Is(got, cause) {
 			t.Error("errors.Is(cause) = false, want true")
@@ -132,19 +132,10 @@ func TestTemporalError(t *testing.T) {
 	})
 
 	t.Run("unwrapped error returns its ApplicationError", func(t *testing.T) {
-		appErr := NewPermanentError("boom", "ActionAborted", nil)
+		appErr := NewPermanentError("boom", "StepAborted", nil)
 		got := temporalError(unwrapError(appErr))
 		if got != error(appErr) {
 			t.Errorf("temporalError = %#v, want the original ApplicationError", got)
-		}
-	})
-
-	t.Run("wrapped unwrapped error is left alone", func(t *testing.T) {
-		appErr := NewPermanentError("boom", "ActionAborted", nil)
-		wrapped := fmt.Errorf("prepare: %w", unwrapError(appErr))
-		got := temporalError(wrapped)
-		if got != wrapped {
-			t.Errorf("temporalError = %v, want the wrapped error unchanged", got)
 		}
 	})
 
@@ -154,4 +145,82 @@ func TestTemporalError(t *testing.T) {
 			t.Errorf("temporalError = %v, want %v", got, plain)
 		}
 	})
+}
+
+func TestTemporalErrorKeepsAWrappedErrorsTypeAndRetryability(t *testing.T) {
+	permanent := NewPermanentError("card declined", "Declined", nil)
+	retryable := NewApplicationError("try later", "Busy")
+
+	tests := []struct {
+		name         string
+		err          error
+		message      string
+		errType      string
+		nonRetryable bool
+	}{
+		{
+			name:         "wrapped permanent error",
+			err:          fmt.Errorf("charge order: %w", permanent),
+			message:      "charge order: card declined",
+			errType:      "Declined",
+			nonRetryable: true,
+		},
+		{
+			name:         "wrapped error from another step",
+			err:          fmt.Errorf("fulfill: %w", unwrapError(permanent)),
+			message:      "fulfill: card declined",
+			errType:      "Declined",
+			nonRetryable: true,
+		},
+		{
+			name:    "wrapped retryable error",
+			err:     fmt.Errorf("charge order: %w", retryable),
+			message: "charge order: try later",
+			errType: "Busy",
+		},
+		{
+			name:         "wrapped twice",
+			err:          fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", permanent)),
+			message:      "outer: inner: card declined",
+			errType:      "Declined",
+			nonRetryable: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := temporalError(tt.err)
+
+			applicationError, ok := result.(*ApplicationError)
+			if !ok {
+				t.Fatalf("temporalError() = %T, want *ApplicationError", result)
+			}
+			if applicationError.Message() != tt.message {
+				t.Errorf("message = %q, want %q", applicationError.Message(), tt.message)
+			}
+			if applicationError.Type() != tt.errType {
+				t.Errorf("type = %q, want %q", applicationError.Type(), tt.errType)
+			}
+			if applicationError.NonRetryable() != tt.nonRetryable {
+				t.Errorf("non-retryable = %v, want %v", applicationError.NonRetryable(), tt.nonRetryable)
+			}
+		})
+	}
+}
+
+func TestTemporalErrorLeavesOtherErrorsAlone(t *testing.T) {
+	plain := errors.New("plain")
+	if temporalError(plain) != plain {
+		t.Error("a plain error changed")
+	}
+
+	wrappedPlain := fmt.Errorf("outer: %w", plain)
+	if temporalError(wrappedPlain) != wrappedPlain {
+		t.Error("a wrapped plain error changed")
+	}
+
+	var application error = NewApplicationError("boom", "Declined")
+	if temporalError(application) != application {
+		t.Error("an ApplicationError changed")
+	}
 }

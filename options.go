@@ -129,6 +129,9 @@ func WithFairKey(key string) Option {
 // WithLogAttribute adds one attribute to every log record of this run and its children.
 func WithLogAttribute(key string, value any) Option {
 	apply := func(config *CommonConfig) {
+		if config.LogAttributes == nil {
+			config.LogAttributes = make(map[string]any)
+		}
 		config.LogAttributes[key] = value
 	}
 	return commonOption(apply)
@@ -137,6 +140,9 @@ func WithLogAttribute(key string, value any) Option {
 // WithLogAttributes merges attributes into every log record of this run and its children.
 func WithLogAttributes(attributes map[string]any) Option {
 	apply := func(config *CommonConfig) {
+		if config.LogAttributes == nil {
+			config.LogAttributes = make(map[string]any)
+		}
 		maps.Copy(config.LogAttributes, attributes)
 	}
 	return commonOption(apply)

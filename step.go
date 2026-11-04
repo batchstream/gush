@@ -3,9 +3,13 @@ package gush
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"go.temporal.io/api/serviceerror"
 )
+
+// errInvalidResumeToken marks a token that could not be decoded.
+var errInvalidResumeToken = errors.New("gush: invalid resume token")
 
 // StepTimeoutErrorType is the error type of an attempt that exceeded its timeout. Pass it
 // to WithNoRetry to stop retrying timed-out steps.
@@ -57,12 +61,15 @@ type StepInfo struct {
 
 // Resume finishes a suspended step with a result or, if stepErr is set, an error. See
 // StepContext.Suspend.
+//
+// An error counts as a failed attempt, so a retryable one runs the step's code again under
+// its retry policy. Pass a NewPermanentError to fail the step for good.
 func (c *Client) Resume(ctx context.Context, resumeToken string, result any, stepErr error) error {
 	token, err := decodeResumeToken(resumeToken)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errInvalidResumeToken, err)
 	}
-	payload, err := encodePayload(result)
+	payload, err := EncodePayload(result)
 	if err != nil {
 		return err
 	}
@@ -72,6 +79,10 @@ func (c *Client) Resume(ctx context.Context, resumeToken string, result any, ste
 // IsResumeTokenError reports whether Resume failed because its token is invalid or the
 // step no longer exists, such as after it timed out or was already resumed.
 func IsResumeTokenError(err error) bool {
+	if errors.Is(err, errInvalidResumeToken) {
+		return true
+	}
+
 	var invalidArgument *serviceerror.InvalidArgument
 	if errors.As(err, &invalidArgument) {
 		return true

@@ -9,6 +9,11 @@ import (
 // abortedStepErrorType is the ApplicationError type of a step's Abort.
 const abortedStepErrorType = "StepAborted"
 
+type contextKey string
+
+// stepContextKey finds the StepContext a plain context.Context was derived from.
+const stepContextKey contextKey = "gush.step_context"
+
 // StepContext is what a step receives. It is a context.Context, so pass it to anything
 // that takes one, and the step's cancellation and deadline follow.
 //
@@ -35,7 +40,8 @@ type StepContext struct {
 // NewStepContext creates a StepContext from any context. Outside a running step, such as
 // in a test, its step information is empty.
 func NewStepContext(ctx context.Context, logAttributes map[string]any) *StepContext {
-	stepCtx := &StepContext{Context: ctx, Logger: NewLogger(), LogAttributes: logAttributes}
+	stepCtx := &StepContext{Logger: NewLogger(), LogAttributes: logAttributes}
+	stepCtx.Context = context.WithValue(ctx, stepContextKey, stepCtx)
 
 	if activity.IsActivity(ctx) {
 		info := activity.GetInfo(ctx)
@@ -58,12 +64,21 @@ func NewStepContext(ctx context.Context, logAttributes map[string]any) *StepCont
 	return stepCtx
 }
 
-// AsStepContext returns ctx as a StepContext, wrapping it if it is not one. It lets helpers
-// that take a plain context.Context log with the step's context.
+// AsStepContext returns ctx as a StepContext, so helpers that take a plain context.Context
+// can log with the step's context. A context derived from a StepContext, such as with
+// context.WithTimeout, keeps ctx's cancellation and the step's logger and attributes.
+// Any other context is wrapped.
 func AsStepContext(ctx context.Context) *StepContext {
 	stepCtx, ok := ctx.(*StepContext)
 	if ok {
 		return stepCtx
+	}
+
+	origin, ok := ctx.Value(stepContextKey).(*StepContext)
+	if ok {
+		derived := *origin
+		derived.Context = ctx
+		return &derived
 	}
 	return NewStepContext(ctx, nil)
 }
@@ -93,7 +108,8 @@ func (stepCtx *StepContext) Suspend() (any, error) {
 	return nil, activity.ErrResultPending
 }
 
-// Heartbeat reports that the step is alive, which WithHeartbeatTimeout requires. Details are
+// Heartbeat reports that the step is alive, which WithHeartbeatTimeout requires. It is also
+// how a running step learns of cancellation: ctx is canceled only after a heartbeat. Details are
 // recorded for the next attempt to read with the SDK's activity.GetHeartbeatDetails. Outside
 // a running step it does nothing.
 func (stepCtx *StepContext) Heartbeat(details ...any) {

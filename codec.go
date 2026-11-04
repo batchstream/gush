@@ -19,6 +19,9 @@ var (
 // Encode serializes a value the way flows and steps do for their input and output.
 // []byte and string are used as they are, including through a pointer, a nil value or
 // nil pointer encodes to nil, and everything else becomes JSON without HTML escaping.
+//
+// A string type of your own is not a string here, so it becomes JSON with its quotes. Read
+// a value back as the type it was written.
 func Encode(value any) ([]byte, error) {
 	if value == nil {
 		return nil, nil
@@ -38,6 +41,8 @@ func Encode(value any) ([]byte, error) {
 		return []byte(typed), nil
 	case *string:
 		return []byte(*typed), nil
+	case *any:
+		return Encode(*typed)
 	}
 
 	buffer := &bytes.Buffer{}
@@ -52,6 +57,7 @@ func Encode(value any) ([]byte, error) {
 
 // Decode deserializes data produced by Encode into target. *string and *[]byte receive
 // the bytes as they are, empty data zeroes target, and everything else is decoded as JSON.
+// *any receives what the JSON holds, or a string when the data is not JSON.
 func Decode(data []byte, target any) error {
 	if len(data) == 0 {
 		setToZeroValue(target)
@@ -65,6 +71,11 @@ func Decode(data []byte, target any) error {
 	case *[]byte:
 		*typed = bytes.Clone(data)
 		return nil
+	case *any:
+		if !json.Valid(data) {
+			*typed = string(data)
+			return nil
+		}
 	}
 	return json.Unmarshal(data, target)
 }
@@ -96,8 +107,10 @@ func setToZeroRecursive(value reflect.Value) {
 	}
 }
 
-// encodePayload is the wire form of a flow or step input or output: Encode, then zstd.
-func encodePayload(value any) ([]byte, error) {
+// EncodePayload is the wire form of a flow or step input or output: Encode, then zstd.
+// Code that works below Gush needs it, such as a test that starts a flow through the SDK's
+// testsuite.
+func EncodePayload(value any) ([]byte, error) {
 	encoded, err := Encode(value)
 	if err != nil {
 		return nil, err
@@ -105,8 +118,8 @@ func encodePayload(value any) ([]byte, error) {
 	return zstdCompress(encoded), nil
 }
 
-// decodePayload reverses encodePayload. An empty payload or nil target leaves target alone.
-func decodePayload(payload []byte, target any) error {
+// DecodePayload reverses EncodePayload. An empty payload or nil target leaves target alone.
+func DecodePayload(payload []byte, target any) error {
 	decompressed, err := zstdDecompress(payload)
 	if err != nil {
 		return err

@@ -1,6 +1,8 @@
 package gush
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -59,4 +61,49 @@ func unsignedAttr(key string, value uint64) LogAttribute {
 		return attribute.String(key, strconv.FormatUint(value, 10))
 	}
 	return attribute.Int64(key, int64(value))
+}
+
+// decodeLogAttributes reads attributes as they arrive from another worker. The SDK's own
+// decoding would turn every number into a float64, which damages large IDs.
+func decodeLogAttributes(raw json.RawMessage) (map[string]any, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+
+	var attributes map[string]any
+	err := decoder.Decode(&attributes)
+	if err != nil {
+		return nil, fmt.Errorf("gush: decode log attributes: %w", err)
+	}
+	resolveNumbers(attributes)
+	return attributes, nil
+}
+
+// resolveNumbers replaces each json.Number with the narrowest of int64, uint64 and float64
+// that holds it.
+func resolveNumbers(attributes map[string]any) {
+	for key, value := range attributes {
+		number, ok := value.(json.Number)
+		if !ok {
+			continue
+		}
+
+		signed, err := number.Int64()
+		if err == nil {
+			attributes[key] = signed
+			continue
+		}
+		unsigned, err := strconv.ParseUint(number.String(), 10, 64)
+		if err == nil {
+			attributes[key] = unsigned
+			continue
+		}
+		float, err := number.Float64()
+		if err == nil {
+			attributes[key] = float
+		}
+	}
 }

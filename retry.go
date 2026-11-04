@@ -26,6 +26,36 @@ type RetryPolicy struct {
 	NoRetry []string `json:"non_retryable_error_types"`
 }
 
+// totalBackoff returns the time spent waiting between attempts if all MaxAttempts are used,
+// applying the same defaults Temporal does to zero settings.
+func (policy RetryPolicy) totalBackoff() time.Duration {
+	interval := policy.InitialInterval
+	if interval == 0 {
+		interval = time.Second
+	}
+	coefficient := policy.BackoffCoefficient
+	if coefficient == 0 {
+		coefficient = 2.0
+	}
+	maxInterval := policy.MaxInterval
+	if maxInterval == 0 {
+		maxInterval = 100 * interval
+	}
+
+	var total time.Duration
+	for retries := policy.MaxAttempts - 1; retries > 0; retries-- {
+		if interval >= maxInterval {
+			return total + time.Duration(retries)*maxInterval
+		}
+		if coefficient <= 1 {
+			return total + time.Duration(retries)*interval
+		}
+		total += interval
+		interval = time.Duration(float64(interval) * coefficient)
+	}
+	return total
+}
+
 func (policy RetryPolicy) temporalPolicy() *temporal.RetryPolicy {
 	temporalPolicy := &temporal.RetryPolicy{
 		InitialInterval:        policy.InitialInterval,

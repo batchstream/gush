@@ -25,6 +25,17 @@ type Logger struct {
 
 	// muted drops records while it returns true. Flows set it to skip replays.
 	muted func() bool
+
+	// now supplies the time for Time and TimeEnd. Flows set it to workflow time, which
+	// stays correct when a replay reaches a Time call.
+	now func() time.Time
+}
+
+func (logger *Logger) currentTime() time.Time {
+	if logger.now != nil {
+		return logger.now()
+	}
+	return time.Now()
 }
 
 // NewLogger creates a Logger whose records carry the given attributes.
@@ -91,7 +102,7 @@ func (logger *Logger) SetAttributes(attributes ...LogAttribute) {
 
 // Time starts a named timer for TimeEnd.
 func (logger *Logger) Time(label string) {
-	logger.timers.Store(label, time.Now())
+	logger.timers.Store(label, logger.currentTime())
 }
 
 // TimeEnd logs the time since the matching Time call, followed by any extra values, and
@@ -101,7 +112,7 @@ func (logger *Logger) TimeEnd(label string, v ...any) {
 
 	started, ok := logger.timers.LoadAndDelete(label)
 	if ok {
-		parts = append(parts, fmt.Sprintf("%s: %s", label, time.Since(started.(time.Time))))
+		parts = append(parts, fmt.Sprintf("%s: %s", label, logger.currentTime().Sub(started.(time.Time))))
 	}
 	if len(v) > 0 {
 		parts = append(parts, strings.TrimSuffix(fmt.Sprintln(v...), "\n"))

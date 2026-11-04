@@ -83,9 +83,10 @@ func runWithTemporal(m *testing.M) int {
 	testWorker := gush.NewWorker(testQueue).
 		WithFlows(Double, FailingFlow, ParentOfFailingFlow, FailingStepFlow, PlainFailureFlow, AbortFlow, ApprovalFlow,
 			ExpiringApprovalFlow, TimeoutFlow, HeartbeatFlow, SilentFlow, ReplayFlow, AttributesFlow, AttributesChildFlow,
-			WaitingFlow, InheritanceFlow, VersionFlow, SmallFlow, BadStepFlow, ChildOnOwnQueueFlow).
+			WaitingFlow, InheritanceFlow, VersionFlow, SmallFlow, BadStepFlow, ChildOnOwnQueueFlow, WrappedAbortFlow,
+			WrappingFlow, ParallelFlow, CleanupFlow, CountdownFlow, AttributeEchoFlow).
 		WithSteps(DoubleStep, FailingStep, PlainFailureStep, AbortStep, ApprovalStep, SlowStep, HeartbeatStep, SilentStep,
-			PurgeCacheStep, AttributesStep, InheritanceStep).
+			PurgeCacheStep, AttributesStep, InheritanceStep, WrappedAbortStep, DecliningStep, CleanupStep, AttributeEchoStep).
 		WithContext(serveContext)
 
 	served := make(chan error, 1)
@@ -957,4 +958,170 @@ func TestPackageLevelFunctionsUseTheDefaultClient(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	stop()
 	assert.NoError(t, <-served)
+}
+
+func WrappedAbortStep(ctx *gush.StepContext) (any, error) {
+	attemptsOf(string(ctx.Input)).Add(1)
+	return nil, fmt.Errorf("charge order: %w", ctx.Abort(errors.New("bad input")))
+}
+
+func WrappedAbortFlow(ctx *gush.FlowContext) (any, error) {
+	return nil, ctx.RunStep(WrappedAbortStep, ctx.Input, nil,
+		gush.WithMaxAttempts(3),
+		gush.WithInitialInterval(retryBackoff),
+	)
+}
+
+func TestWrappingAnAbortKeepsItPermanent(t *testing.T) {
+	key := uniqueKey(t)
+
+	err := testClient.RunFlow(testContext(t), flowRequest(WrappedAbortFlow, key, nil))
+
+	require.Error(t, err)
+	assert.EqualValues(t, 1, attemptsOf(key).Load())
+	assert.True(t, gush.IsPermanentError(err))
+	assert.Equal(t, "[StepAborted] charge order: bad input", err.Error())
+}
+
+func DecliningStep(*gush.StepContext) (any, error) {
+	return nil, gush.NewPermanentError("card declined", "Declined", nil)
+}
+
+func WrappingFlow(ctx *gush.FlowContext) (any, error) {
+	attemptsOf(string(ctx.Input)).Store(ctx.Attempt)
+	err := ctx.RunStep(DecliningStep, nil, nil)
+	return nil, fmt.Errorf("fulfill: %w", err)
+}
+
+func TestFlowWrappingAStepErrorKeepsItsType(t *testing.T) {
+	key := uniqueKey(t)
+
+	err := testClient.RunFlow(testContext(t), flowRequest(WrappingFlow, key, nil),
+		gush.WithMaxAttempts(3),
+		gush.WithInitialInterval(retryBackoff),
+	)
+
+	require.Error(t, err)
+	assert.EqualValues(t, 1, attemptsOf(key).Load())
+	assert.True(t, gush.IsPermanentError(err))
+	assert.Equal(t, "[Declined] fulfill: card declined", err.Error())
+}
+
+func ParallelFlow(ctx *gush.FlowContext) (any, error) {
+	total := 0
+	group := workflow.NewWaitGroup(ctx)
+	for i := range 3 {
+		group.Add(1)
+		workflow.Go(ctx, func(g workflow.Context) {
+			defer group.Done()
+
+			input := order{ID: "parallel", Amount: i + 1}
+			var output order
+			err := ctx.WithContext(g).RunStep(DoubleStep, input, &output)
+			if err == nil {
+				total += output.Amount
+			}
+		})
+	}
+	group.Wait(ctx)
+	return total, nil
+}
+
+func TestParallelStepsRunThroughWithContext(t *testing.T) {
+	var total int
+
+	err := testClient.RunFlow(testContext(t), flowRequest(ParallelFlow, nil, &total))
+
+	require.NoError(t, err)
+	assert.Equal(t, 12, total)
+}
+
+func CleanupStep(ctx *gush.StepContext) (any, error) {
+	attemptsOf(string(ctx.Input)).Add(1)
+	return nil, nil
+}
+
+func CleanupFlow(ctx *gush.FlowContext) (any, error) {
+	err := workflow.Sleep(ctx, time.Hour)
+	if !temporal.IsCanceledError(err) {
+		return nil, err
+	}
+
+	refused := ctx.RunStep(CleanupStep, "refused", nil)
+	if !temporal.IsCanceledError(refused) {
+		return nil, fmt.Errorf("a step on the canceled context returned %w", refused)
+	}
+
+	disconnected, _ := workflow.NewDisconnectedContext(ctx)
+	return nil, ctx.WithContext(disconnected).RunStep(CleanupStep, ctx.Input, nil)
+}
+
+func TestCanceledFlowCleansUpOnADisconnectedContext(t *testing.T) {
+	ctx := testContext(t)
+	key := uniqueKey(t)
+
+	err := testClient.RunFlow(ctx, flowRequest(CleanupFlow, key, nil), gush.WithAsync(), gush.WithID(key))
+	require.NoError(t, err)
+	require.NoError(t, testClient.CancelFlow(ctx, key))
+
+	require.Eventually(t, func() bool {
+		flow, err := testClient.GetFlow(ctx, key)
+		return err == nil && flow.Status == "Completed"
+	}, 10*time.Second, 100*time.Millisecond)
+	assert.EqualValues(t, 1, attemptsOf(key).Load())
+}
+
+func CountdownFlow(ctx *gush.FlowContext) (any, error) {
+	var remaining int
+	err := ctx.Decode(&remaining)
+	if err != nil {
+		return nil, err
+	}
+
+	if remaining > 0 {
+		return nil, ctx.ContinueAsNew(remaining - 1)
+	}
+	return ctx.LogAttributes["tenant"], nil
+}
+
+func TestContinueAsNewCarriesTheInputAndAttributes(t *testing.T) {
+	ctx := testContext(t)
+	flowID := uniqueKey(t)
+
+	var tenant string
+	err := testClient.RunFlow(ctx, flowRequest(CountdownFlow, 2, &tenant),
+		gush.WithID(flowID),
+		gush.WithPriority(gush.PriorityHigh),
+		gush.WithLogAttribute("tenant", "acme"),
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "acme", tenant)
+
+	flow, err := testClient.GetFlow(ctx, flowID)
+	require.NoError(t, err)
+	assert.Equal(t, "Completed", flow.Status)
+	assert.Equal(t, gush.PriorityHigh, flow.Priority)
+}
+
+func AttributeEchoStep(ctx *gush.StepContext) (any, error) {
+	return ctx.LogAttributes["user_id"], nil
+}
+
+func AttributeEchoFlow(ctx *gush.FlowContext) (any, error) {
+	var userID int64
+	err := ctx.RunStep(AttributeEchoStep, nil, &userID)
+	return userID, err
+}
+
+func TestLargeNumericAttributesSurviveEveryHop(t *testing.T) {
+	const userID = int64(9007199254740993)
+
+	var output int64
+	err := testClient.RunFlow(testContext(t), flowRequest(AttributeEchoFlow, nil, &output),
+		gush.WithLogAttribute("user_id", userID),
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, userID, output)
 }

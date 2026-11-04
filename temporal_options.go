@@ -67,12 +67,12 @@ func newActivityOptions(config *StepConfig) workflow.ActivityOptions {
 	if config.PickupTimeout > 0 {
 		options.ScheduleToStartTimeout = config.PickupTimeout
 
-		// The overall limit must cover the pickup wait plus all attempts, since the pickup
-		// limit no longer applies once a worker has the task. Unlimited attempts have no
-		// such total, so they get no overall limit.
+		// The overall limit stops a task lingering once no worker is left. It must not cut
+		// retries short, so it covers every attempt's pickup wait and run plus the delays
+		// between them. Unlimited attempts have no such total, so they get no overall limit.
 		if config.MaxAttempts > 0 {
-			attempts := time.Duration(config.MaxAttempts) * config.AttemptTimeout
-			options.ScheduleToCloseTimeout = 2 * (config.PickupTimeout + attempts)
+			perAttempt := config.PickupTimeout + config.AttemptTimeout
+			options.ScheduleToCloseTimeout = time.Duration(config.MaxAttempts)*perAttempt + config.totalBackoff()
 		}
 	}
 	return options

@@ -3,13 +3,18 @@ package gush
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 )
 
+// typeArguments matches the [...] the runtime prints in the name of a generic function.
+var typeArguments = regexp.MustCompile(`\[[^\]]*\]`)
+
 // functionName returns the name a flow or step function registers under, which is its
-// bare Go name without package or receiver. A string is its own name, and anything that
-// is not a function has no name.
+// bare Go name without package, receiver or type arguments, so every instantiation of a
+// generic function shares one name. A string is its own name, and anything that is not a
+// function has no name.
 func functionName(function any) string {
 	name, ok := function.(string)
 	if ok {
@@ -28,7 +33,7 @@ func functionName(function any) string {
 		return ""
 	}
 
-	elements := strings.Split(runtimeFunction.Name(), ".")
+	elements := strings.Split(typeArguments.ReplaceAllString(runtimeFunction.Name(), ""), ".")
 	// The compiler adds -fm to a method value, such as steps.Charge on a struct pointer.
 	return strings.TrimSuffix(elements[len(elements)-1], "-fm")
 }

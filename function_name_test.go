@@ -40,6 +40,26 @@ func TestFunctionName(t *testing.T) {
 	}
 }
 
+func genericTestStep[T any](*StepContext) (any, error) { return nil, nil }
+
+type genericTestHandlers[T any] struct{}
+
+func (genericTestHandlers[T]) Run(*StepContext) (any, error) { return nil, nil }
+
+func TestFunctionNameOfGenericFunctions(t *testing.T) {
+	if name := functionName(genericTestStep[int]); name != "genericTestStep" {
+		t.Errorf("generic function = %q", name)
+	}
+	if name := functionName(genericTestStep[string]); name != "genericTestStep" {
+		t.Errorf("another instantiation = %q", name)
+	}
+
+	var handlers genericTestHandlers[int]
+	if name := functionName(handlers.Run); name != "Run" {
+		t.Errorf("method of a generic type = %q", name)
+	}
+}
+
 func TestHandlerNameReportsWhatCannotRun(t *testing.T) {
 	_, err := handlerName("flow", 123)
 

@@ -2,6 +2,7 @@ package gush
 
 import (
 	"maps"
+	"time"
 
 	"go.temporal.io/sdk/workflow"
 )
@@ -68,12 +69,30 @@ func NewFlowContext(ctx workflow.Context, logAttributes map[string]any) *FlowCon
 	flowCtx.Logger.muted = func() bool {
 		return workflow.IsReplaying(ctx)
 	}
+	flowCtx.Logger.now = func() time.Time {
+		return workflow.Now(ctx)
+	}
 	for key, value := range logAttributes {
 		flowCtx.Logger.SetAttributes(Attr(key, value))
 	}
 	flowCtx.Logger.SetAttributes(Attr("flow_id", flowCtx.ID))
 
 	return flowCtx
+}
+
+// WithContext returns a copy of this FlowContext that runs its steps and child flows on ctx.
+// RunStep and RunFlow always use the FlowContext's own workflow.Context, so code holding a
+// different one needs this, such as a goroutine started with workflow.Go or cleanup on a
+// workflow.NewDisconnectedContext.
+//
+//	workflow.Go(ctx, func(g workflow.Context) {
+//	    err := ctx.WithContext(g).RunStep(Process, item, nil)
+//	    ...
+//	})
+func (flowCtx *FlowContext) WithContext(ctx workflow.Context) *FlowContext {
+	derived := *flowCtx
+	derived.Context = ctx
+	return &derived
 }
 
 // RunStep runs a step and waits for its result. The step inherits this flow's priority,
@@ -89,7 +108,7 @@ func (flowCtx *FlowContext) RunStep(step any, input, output any, options ...Step
 	if err != nil {
 		return flowCtx.Abort(err)
 	}
-	payload, err := encodePayload(input)
+	payload, err := EncodePayload(input)
 	if err != nil {
 		return flowCtx.Abort(err)
 	}
@@ -103,7 +122,7 @@ func (flowCtx *FlowContext) RunStep(step any, input, output any, options ...Step
 		return unwrapError(err)
 	}
 
-	err = decodePayload(result, output)
+	err = DecodePayload(result, output)
 	if err != nil {
 		return flowCtx.Abort(err)
 	}
@@ -123,7 +142,7 @@ func (flowCtx *FlowContext) RunFlow(request FlowRequest, options ...FlowOption) 
 	if err != nil {
 		return flowCtx.Abort(err)
 	}
-	payload, err := encodePayload(request.Input)
+	payload, err := EncodePayload(request.Input)
 	if err != nil {
 		return flowCtx.Abort(err)
 	}
@@ -142,7 +161,7 @@ func (flowCtx *FlowContext) RunFlow(request FlowRequest, options ...FlowOption) 
 		return unwrapError(err)
 	}
 
-	err = decodePayload(result, request.Output)
+	err = DecodePayload(result, request.Output)
 	if err != nil {
 		return flowCtx.Abort(err)
 	}
@@ -164,12 +183,30 @@ func (flowCtx *FlowContext) RunFlow(request FlowRequest, options ...FlowOption) 
 //	}
 //
 // To change the same code again, keep the tag, raise maxVersion and add a branch. Once no
-// execution can reach an old branch, delete it but keep the Version call, so that a stale
-// execution fails there instead of running code it never ran before.
+// execution can reach an old branch, delete it but keep the Version call. Version accepts
+// every recorded version, so a stale execution would then run the newer branch. To make one
+// fail instead, call the SDK's workflow.GetVersion with a higher minimum.
 func (flowCtx *FlowContext) Version(tag string, maxVersion int) int {
 	minSupported := workflow.Version(DefaultFlowVersion)
 	version := workflow.GetVersion(flowCtx.Context, tag, minSupported, workflow.Version(maxVersion))
 	return int(version)
+}
+
+// ContinueAsNew returns an error that ends this run and starts the same flow again with the
+// given input, the same flow ID and log attributes, and an empty history. Temporal limits a
+// flow's history, so a flow that loops for a long time returns this every so often.
+//
+//	if batch.Done {
+//	    return summary, nil
+//	}
+//	return nil, ctx.ContinueAsNew(batch.Next)
+func (flowCtx *FlowContext) ContinueAsNew(input any) error {
+	payload, err := EncodePayload(input)
+	if err != nil {
+		return flowCtx.Abort(err)
+	}
+	flowName := workflow.GetInfo(flowCtx.Context).WorkflowType.Name
+	return workflow.NewContinueAsNewError(flowCtx.Context, flowName, payload, flowCtx.LogAttributes)
 }
 
 // Decode deserializes the flow's Input into target, aborting the flow if it cannot.

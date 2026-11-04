@@ -84,8 +84,22 @@ func TestPickupTimeoutCoversEveryAttempt(t *testing.T) {
 	if options.ScheduleToStartTimeout != time.Minute {
 		t.Errorf("schedule to start = %v", options.ScheduleToStartTimeout)
 	}
-	if options.ScheduleToCloseTimeout != 8*time.Minute {
+	// Three pickups and runs of a minute each, plus 1s and 2s between the attempts.
+	if options.ScheduleToCloseTimeout != 6*time.Minute+3*time.Second {
 		t.Errorf("schedule to close = %v", options.ScheduleToCloseTimeout)
+	}
+}
+
+func TestPickupTimeoutDoesNotCutRetriesShort(t *testing.T) {
+	config := DefaultStepConfig()
+	config.PickupTimeout = time.Second
+	config.AttemptTimeout = time.Second
+	config.MaxAttempts = 10
+
+	options := newActivityOptions(config)
+
+	if options.ScheduleToCloseTimeout < config.totalBackoff()+20*time.Second {
+		t.Errorf("schedule to close = %v, backoff alone = %v", options.ScheduleToCloseTimeout, config.totalBackoff())
 	}
 }
 
@@ -111,5 +125,39 @@ func TestAsyncChildFlowOutlivesItsParent(t *testing.T) {
 	config.Async = true
 	if newChildWorkflowOptions("queue", config).ParentClosePolicy != enums.PARENT_CLOSE_POLICY_ABANDON {
 		t.Errorf("an async child must be abandoned when its parent closes")
+	}
+}
+
+func TestTotalBackoff(t *testing.T) {
+	tests := []struct {
+		name     string
+		policy   RetryPolicy
+		expected time.Duration
+	}{
+		{name: "one attempt has no delay", policy: RetryPolicy{MaxAttempts: 1}},
+		{name: "defaults", policy: RetryPolicy{MaxAttempts: 4}, expected: 7 * time.Second},
+		{
+			name:     "capped",
+			policy:   RetryPolicy{InitialInterval: time.Second, BackoffCoefficient: 2, MaxInterval: 2 * time.Second, MaxAttempts: 5},
+			expected: 7 * time.Second,
+		},
+		{
+			name:     "constant",
+			policy:   RetryPolicy{InitialInterval: time.Second, BackoffCoefficient: 1, MaxAttempts: 4},
+			expected: 3 * time.Second,
+		},
+		{
+			name:     "a huge attempt count does not loop",
+			policy:   RetryPolicy{InitialInterval: time.Second, BackoffCoefficient: 1, MaxInterval: time.Second, MaxAttempts: 1 << 30},
+			expected: time.Duration(1<<30-1) * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.policy.totalBackoff(); got != tt.expected {
+				t.Errorf("totalBackoff() = %v, want %v", got, tt.expected)
+			}
+		})
 	}
 }

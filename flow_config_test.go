@@ -287,3 +287,99 @@ func TestCronScheduleValidation(t *testing.T) {
 		})
 	}
 }
+
+func decodedConfig(t *testing.T, raw string) *gush.FlowConfig {
+	t.Helper()
+
+	config := &gush.FlowConfig{}
+	err := gush.Decode([]byte(raw), config)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	return config
+}
+
+func TestPartialJSONConfigKeepsTheDefaults(t *testing.T) {
+	config := decodedConfig(t, `{"id":"flow-1","priority":"high"}`)
+	defaults := gush.DefaultFlowConfig()
+
+	if config.ID != "flow-1" || config.Priority != gush.PriorityHigh {
+		t.Errorf("set fields = %q, %q", config.ID, config.Priority)
+	}
+	if config.MaxAttempts != defaults.MaxAttempts {
+		t.Errorf("attempts = %d, want the default %d", config.MaxAttempts, defaults.MaxAttempts)
+	}
+	if config.InitialInterval != defaults.InitialInterval || config.MaxInterval != defaults.MaxInterval {
+		t.Errorf("intervals = %v, %v", config.InitialInterval, config.MaxInterval)
+	}
+}
+
+func TestJSONConfigTakesAWrittenZero(t *testing.T) {
+	config := decodedConfig(t, `{"maximum_attempts":0}`)
+
+	if config.MaxAttempts != 0 {
+		t.Errorf("attempts = %d, want the written 0, which means unlimited", config.MaxAttempts)
+	}
+}
+
+func TestJSONConfigKeepsLogAttributeNumbersExact(t *testing.T) {
+	config := decodedConfig(t, `{"log_attributes":{"user_id":9007199254740993}}`)
+
+	if config.LogAttributes["user_id"] != int64(9007199254740993) {
+		t.Errorf("user_id = %v (%T)", config.LogAttributes["user_id"], config.LogAttributes["user_id"])
+	}
+}
+
+func TestOptionsApplyToADecodedConfig(t *testing.T) {
+	config := decodedConfig(t, `{"log_attributes":null}`)
+
+	config.Apply(gush.WithLogAttribute("tenant", "acme"))
+
+	if config.LogAttributes["tenant"] != "acme" {
+		t.Errorf("attributes = %v", config.LogAttributes)
+	}
+}
+
+func TestLogAttributeOptionsApplyToAZeroConfig(t *testing.T) {
+	var config gush.StepConfig
+	attributes := map[string]any{"b": 2}
+
+	config.Apply(gush.WithLogAttributes(attributes), gush.WithLogAttribute("a", 1))
+
+	if config.LogAttributes["a"] != 1 || config.LogAttributes["b"] != 2 {
+		t.Errorf("attributes = %v", config.LogAttributes)
+	}
+}
+
+func TestWithConfigKeepsWhatAChildInherits(t *testing.T) {
+	inherited := gush.DefaultFlowConfig()
+	inherited.Priority = gush.PriorityHigh
+	inherited.FairKey = "tenant-1"
+	inherited.LogAttributes["tenant"] = "acme"
+	inherited.LogAttributes["region"] = "parent"
+
+	config := decodedConfig(t, `{"id":"child","log_attributes":{"region":"child"}}`)
+	inherited.Apply(gush.WithConfig(config))
+
+	if inherited.ID != "child" {
+		t.Errorf("id = %q", inherited.ID)
+	}
+	if inherited.Priority != gush.PriorityHigh || inherited.FairKey != "tenant-1" {
+		t.Errorf("inherited scheduling = %q, %q", inherited.Priority, inherited.FairKey)
+	}
+	if inherited.LogAttributes["tenant"] != "acme" || inherited.LogAttributes["region"] != "child" {
+		t.Errorf("attributes = %v", inherited.LogAttributes)
+	}
+}
+
+func TestWithConfigOverridesWhatItSets(t *testing.T) {
+	inherited := gush.DefaultFlowConfig()
+	inherited.Priority = gush.PriorityHigh
+
+	config := decodedConfig(t, `{"priority":"low","fairness":"tenant-2"}`)
+	inherited.Apply(gush.WithConfig(config))
+
+	if inherited.Priority != gush.PriorityLow || inherited.FairKey != "tenant-2" {
+		t.Errorf("scheduling = %q, %q", inherited.Priority, inherited.FairKey)
+	}
+}

@@ -93,7 +93,8 @@ func (w *Worker) WithMaxFlowTasks(limit int) *Worker {
 	return w
 }
 
-// WithFlowPollers sets how many goroutines fetch flow tasks.
+// WithFlowPollers sets how many goroutines fetch flow tasks. Temporal needs at least 2, and
+// Serve reports a lower value.
 func (w *Worker) WithFlowPollers(count int) *Worker {
 	w.FlowPollers = count
 	return w

@@ -66,7 +66,7 @@ func (c *Client) RunFlow(ctx context.Context, request FlowRequest, options ...Fl
 	if err != nil {
 		return err
 	}
-	payload, err := encodePayload(request.Input)
+	payload, err := EncodePayload(request.Input)
 	if err != nil {
 		return err
 	}
@@ -85,10 +85,13 @@ func (c *Client) RunFlow(ctx context.Context, request FlowRequest, options ...Fl
 	if err != nil {
 		return unwrapError(err)
 	}
-	return decodePayload(result, request.Output)
+	return DecodePayload(result, request.Output)
 }
 
-// CancelFlow asks a flow to stop, letting it clean up. Its children and steps are canceled too.
+// CancelFlow asks a flow to stop. Its children and steps are canceled too, so a RunStep in
+// progress returns a canceled error. Cleanup steps need a disconnected context; see
+// FlowContext.WithContext. A step that is already running only finds out when it calls
+// Heartbeat with WithHeartbeatTimeout set.
 func (c *Client) CancelFlow(ctx context.Context, flowID string) error {
 	return c.temporalClient.CancelWorkflow(ctx, flowID, "")
 }

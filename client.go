@@ -36,7 +36,7 @@ func Dial(options Options) (*Client, error) {
 	}
 	if options.Logger == nil {
 		handlerOptions := &slog.HandlerOptions{Level: slog.LevelError}
-		handler := slog.NewTextHandler(os.Stdout, handlerOptions)
+		handler := slog.NewTextHandler(os.Stderr, handlerOptions)
 		options.Logger = temporallog.NewStructuredLogger(slog.New(handler))
 	}
 
