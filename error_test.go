@@ -325,12 +325,60 @@ func TestResumeError(t *testing.T) {
 		}
 	})
 
-	t.Run("a canceled error cancels the step", func(t *testing.T) {
-		canceled := temporal.NewCanceledError()
-		for _, err := range []error{canceled, context.Canceled} {
-			if got := resumeError(err); got != err {
-				t.Errorf("resumeError(%v) = %v, want it unchanged", err, got)
+	t.Run("a canceled error asks to cancel the step", func(t *testing.T) {
+		canceled := []error{temporal.NewCanceledError(), context.Canceled, fmt.Errorf("review: %w", context.Canceled)}
+		for _, err := range canceled {
+			if !isCancellation(err) {
+				t.Errorf("isCancellation(%v) = false", err)
+			}
+		}
+		other := []error{nil, errors.New("rejected"), NewApplicationError("retry", "Retry")}
+		for _, err := range other {
+			if isCancellation(err) {
+				t.Errorf("isCancellation(%v) = true", err)
 			}
 		}
 	})
+}
+
+func TestResumeErrorDropsACanceledCause(t *testing.T) {
+	permanent := NewPermanentError("rejected", "Rejected", context.Canceled)
+	wrapped := fmt.Errorf("review: %w", permanent)
+	options := temporal.ApplicationErrorOptions{Cause: context.Canceled}
+	retryable := temporal.NewApplicationErrorWithOptions("retry", "Retry", options)
+	tests := map[string]struct {
+		err       error
+		message   string
+		permanent bool
+	}{
+		"permanent": {permanent, "rejected", true},
+		"wrapped":   {wrapped, "review: rejected", true},
+		"retryable": {retryable, "retry", false},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := resumeError(test.err)
+
+			if errors.Is(got, context.Canceled) || temporal.IsCanceledError(got) {
+				t.Errorf("resumeError() = %v still reads as canceled", got)
+			}
+			var appErr *ApplicationError
+			if !errors.As(got, &appErr) {
+				t.Fatalf("resumeError() = %v", got)
+			}
+			if appErr.Message() != test.message || appErr.NonRetryable() != test.permanent {
+				t.Errorf("message = %q, permanent = %v", appErr.Message(), appErr.NonRetryable())
+			}
+		})
+	}
+}
+
+func TestResumeErrorKeepsAnotherCause(t *testing.T) {
+	cause := errors.New("reviewer unavailable")
+	permanent := NewPermanentError("rejected", "Rejected", cause)
+
+	if got := resumeError(permanent); !errors.Is(got, cause) {
+		t.Errorf("resumeError() = %v lost its cause", got)
+	}
 }
