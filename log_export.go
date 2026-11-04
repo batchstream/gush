@@ -68,7 +68,6 @@ var logExport struct {
 //   - OTEL_ENDPOINT: OTLP/gRPC. A bare host:port is plaintext, and a URL's scheme chooses:
 //     https means TLS.
 //   - OTEL_HTTP_ENDPOINT: OTLP/HTTP, as an http:// or https:// URL. Logs go to /v1/logs.
-//   - TRACING_HTTP_ENDPOINT, a deprecated alias of OTEL_HTTP_ENDPOINT.
 //   - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT: the standard
 //     OpenTelemetry variables, including their protocol, header and TLS settings.
 //
@@ -140,7 +139,7 @@ func newLogExporterFromEnv(ctx context.Context) (sdklog.Exporter, error) {
 		return newGRPCLogExporter(ctx, grpcEndpoint)
 	}
 
-	httpEndpoint := firstEnv(envLogHTTPEndpoint, envLogHTTPEndpointLegacy)
+	httpEndpoint := firstEnv(envLogHTTPEndpoint)
 	if httpEndpoint != "" {
 		return newHTTPLogExporter(ctx, httpEndpoint)
 	}

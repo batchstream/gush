@@ -24,7 +24,7 @@ import (
 func clearLogEnv(t *testing.T) {
 	t.Helper()
 	names := []string{
-		envLogGRPCEndpoint, envLogHTTPEndpoint, envLogHTTPEndpointLegacy,
+		envLogGRPCEndpoint, envLogHTTPEndpoint,
 		envOTLPLogsEndpoint, envOTLPEndpoint, envOTLPLogsProtocol, envOTLPProtocol,
 	}
 	for _, name := range names {
@@ -198,16 +198,6 @@ func TestExportsOverHTTP(t *testing.T) {
 	assert.Contains(t, *paths, "/v1/logs")
 }
 
-func TestExportsOverHTTPThroughTheLegacyAlias(t *testing.T) {
-	clearLogEnv(t)
-	server, collected, _ := startHTTPCollector(t)
-	t.Setenv(envLogHTTPEndpointLegacy, server.URL)
-
-	exportOneRecord(t, "over legacy alias")
-
-	assertCollected(t, collected, "over legacy alias")
-}
-
 func TestExportsOverGRPCToABareHostPort(t *testing.T) {
 	clearLogEnv(t)
 	endpoint, collected := startGRPCCollector(t)
@@ -262,20 +252,6 @@ func TestGRPCEndpointWinsOverHTTP(t *testing.T) {
 	assertCollected(t, grpcCollected, "precedence")
 	_, reachedHTTP := httpCollected.attributesOf("precedence")
 	assert.False(t, reachedHTTP)
-}
-
-func TestHTTPEndpointWinsOverItsDeprecatedAlias(t *testing.T) {
-	clearLogEnv(t)
-	legacy, legacyCollected, _ := startHTTPCollector(t)
-	current, currentCollected, _ := startHTTPCollector(t)
-	t.Setenv(envLogHTTPEndpointLegacy, legacy.URL)
-	t.Setenv(envLogHTTPEndpoint, current.URL)
-
-	exportOneRecord(t, "alias precedence")
-
-	assertCollected(t, currentCollected, "alias precedence")
-	_, reachedLegacy := legacyCollected.attributesOf("alias precedence")
-	assert.False(t, reachedLegacy)
 }
 
 func TestRejectsAnHTTPEndpointThatIsNotAURL(t *testing.T) {

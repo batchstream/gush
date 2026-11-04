@@ -849,7 +849,6 @@ func otlpRecords(t *testing.T) (*httptest.Server, *sync.Map) {
 func TestLogsFromOneRunReachTheCollectorCorrelated(t *testing.T) {
 	server, records := otlpRecords(t)
 	t.Setenv("OTEL_ENDPOINT", "")
-	t.Setenv("TRACING_HTTP_ENDPOINT", "")
 	t.Setenv("OTEL_HTTP_ENDPOINT", server.URL)
 
 	clientOptions := gush.Options{HostPort: testHostPort}

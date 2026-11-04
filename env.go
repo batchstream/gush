@@ -7,9 +7,8 @@ const (
 	envTemporalAddress   = "TEMPORAL_ADDRESS"
 	envTemporalNamespace = "TEMPORAL_NAMESPACE"
 
-	envLogGRPCEndpoint       = "OTEL_ENDPOINT"
-	envLogHTTPEndpoint       = "OTEL_HTTP_ENDPOINT"
-	envLogHTTPEndpointLegacy = "TRACING_HTTP_ENDPOINT"
+	envLogGRPCEndpoint = "OTEL_ENDPOINT"
+	envLogHTTPEndpoint = "OTEL_HTTP_ENDPOINT"
 
 	envOTLPLogsEndpoint = "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"
 	envOTLPEndpoint     = "OTEL_EXPORTER_OTLP_ENDPOINT"
