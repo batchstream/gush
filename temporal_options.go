@@ -48,9 +48,13 @@ func newChildWorkflowOptions(queue string, config *FlowConfig) workflow.ChildWor
 		WorkflowExecutionTimeout: config.Timeout,
 		VersioningIntent:         defaultCommandVersioningIntent(),
 	}
-	if config.Async {
-		options.ParentClosePolicy = enums.PARENT_CLOSE_POLICY_ABANDON
-	}
+	return options
+}
+
+// newDetachedChildWorkflowOptions is for a child that outlives its parent.
+func newDetachedChildWorkflowOptions(queue string, config *FlowConfig) workflow.ChildWorkflowOptions {
+	options := newChildWorkflowOptions(queue, config)
+	options.ParentClosePolicy = enums.PARENT_CLOSE_POLICY_ABANDON
 	return options
 }
 

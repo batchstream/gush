@@ -86,28 +86,25 @@ Temporal replays flow code to restore it, so flows must be deterministic: no I/O
 
 ## Running flows
 
-`RunFlow` waits for the result. `WithAsync` returns once the flow has started.
+`RunFlow` waits for the result. `StartFlow` returns the flow's ID once it has started.
 
 ```go
 request := gush.FlowRequest{Queue: "orders", Flow: Fulfill, Input: order}
-err := client.RunFlow(ctx, request,
-    gush.WithID("order-1"),
-    gush.WithAsync(),
-)
+flowID, err := client.StartFlow(ctx, request)
 
-flow, err := client.GetFlow(ctx, "order-1") // flow.Status: Running, Completed, Failed, ...
-err = client.CancelFlow(ctx, "order-1")     // lets the flow clean up
-err = client.TerminateFlow(ctx, "order-1", "reason") // stops it immediately
+flow, err := client.GetFlow(ctx, flowID) // flow.Status: Running, Completed, Failed, ...
+err = client.CancelFlow(ctx, flowID)     // lets the flow clean up
+err = client.TerminateFlow(ctx, flowID, "reason") // stops it immediately
 ```
 
-A flow starts a child the same way. A child with no queue runs on its parent's.
+A flow starts a child the same way. A child with no queue runs on its parent's, and one begun with `StartFlow` outlives its parent.
 
 ```go
 request := gush.FlowRequest{Flow: Notify, Input: receipt}
 err := ctx.RunFlow(request)
 ```
 
-`WithCron("0 2 * * *")` runs a flow on a schedule in UTC until it is canceled, terminated or stopped by `WithTimeout`. Add `WithAsync`, because `RunFlow` otherwise waits across every run.
+`WithCron("0 2 * * *")` runs a flow on a schedule in UTC until it is canceled, terminated or stopped by `WithTimeout`. Start it with `StartFlow`, because `RunFlow` returns an error: a schedule has no result to wait for.
 
 Flows and steps are registered under their bare Go function names, and can be called by that name as a string. Two functions with the same name in different packages collide, and `Serve` reports it. Use `NewFlowHandler` and `NewStepHandler` to choose a name, which closures and the instantiations of a generic function need too.
 
@@ -159,10 +156,9 @@ A step that is already running only finds out about the cancellation through `ct
 | `WithFairKey(key)` | both | Group to schedule fairly against, such as a tenant. |
 | `WithLogAttribute(k, v)` | both | Attribute on every log line of this run and its children. |
 | `WithLogAttributes(m)` | both | The same, for several attributes. |
-| `WithID(id)` | flow | Flow ID. Otherwise one is generated and not returned, so set one to refer to the flow later. A client's `RunFlow` joins a flow already running with this ID and ignores this run's input, and a child flow gets an error. |
+| `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's input, and a child flow gets an error. |
 | `WithTimeout(d)` | flow | Limit on the whole execution, including every retry and every scheduled run. |
-| `WithCron(expr)` | flow | Schedule in UTC. Use with `WithAsync`. |
-| `WithAsync()` | flow | Returns once started. An async child outlives its parent. |
+| `WithCron(expr)` | flow | Schedule in UTC. Use with `StartFlow`. |
 | `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Fields left out of the JSON keep their defaults. |
 | `WithQueue(q)` | step | Runs on another queue. |
 | `WithAttemptTimeout(d)` | step | Limit on each attempt, not the step as a whole. |

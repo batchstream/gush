@@ -2,8 +2,15 @@ package gush
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	"go.temporal.io/sdk/client"
 )
+
+// errCronNeedsStartFlow is what RunFlow returns for a schedule, which never gives it a
+// result to wait for.
+var errCronNeedsStartFlow = errors.New("gush: a cron schedule has no result for RunFlow to wait for; use StartFlow")
 
 // FlowHandlerFunc is the signature of a flow.
 type FlowHandlerFunc func(ctx *FlowContext) (output any, err error)
@@ -36,7 +43,7 @@ type FlowRequest struct {
 	// Input is the flow's input. See Encode for how it is serialized.
 	Input any
 
-	// Output receives the flow's result, unless it is nil or the run is async.
+	// Output receives the result of RunFlow, unless it is nil. StartFlow does not use it.
 	Output any
 }
 
@@ -57,27 +64,18 @@ type FlowInfo struct {
 	CloseTime *time.Time // nil while running
 }
 
-// RunFlow starts a flow and waits for its result, unless WithAsync is set.
+// RunFlow starts a flow and waits for its result. It returns an error for a WithCron
+// schedule, which never gives a result to wait for, so start one with StartFlow.
 func (c *Client) RunFlow(ctx context.Context, request FlowRequest, options ...FlowOption) error {
 	config := DefaultFlowConfig()
 	config.Apply(options...)
-
-	flowName, err := handlerName("flow", request.Flow)
-	if err != nil {
-		return err
-	}
-	payload, err := EncodePayload(request.Input)
-	if err != nil {
-		return err
+	if config.Cron != "" {
+		return errCronNeedsStartFlow
 	}
 
-	startOptions := newStartWorkflowOptions(request.Queue, config)
-	run, err := c.temporalClient.ExecuteWorkflow(ctx, startOptions, flowName, payload, config.LogAttributes)
+	run, err := c.startFlow(ctx, request, config)
 	if err != nil {
 		return err
-	}
-	if config.Async {
-		return nil
 	}
 
 	var result []byte
@@ -86,6 +84,32 @@ func (c *Client) RunFlow(ctx context.Context, request FlowRequest, options ...Fl
 		return unwrapError(err)
 	}
 	return DecodePayload(result, request.Output)
+}
+
+// StartFlow starts a flow and returns its ID without waiting for it to finish.
+func (c *Client) StartFlow(ctx context.Context, request FlowRequest, options ...FlowOption) (string, error) {
+	config := DefaultFlowConfig()
+	config.Apply(options...)
+
+	run, err := c.startFlow(ctx, request, config)
+	if err != nil {
+		return "", err
+	}
+	return run.GetID(), nil
+}
+
+func (c *Client) startFlow(ctx context.Context, request FlowRequest, config *FlowConfig) (client.WorkflowRun, error) {
+	flowName, err := handlerName("flow", request.Flow)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := EncodePayload(request.Input)
+	if err != nil {
+		return nil, err
+	}
+
+	startOptions := newStartWorkflowOptions(request.Queue, config)
+	return c.temporalClient.ExecuteWorkflow(ctx, startOptions, flowName, payload, config.LogAttributes)
 }
 
 // CancelFlow asks a flow to stop. Its children and steps are canceled too, so a RunStep in

@@ -131,30 +131,20 @@ func (flowCtx *FlowContext) RunStep(step any, input, output any, options ...Step
 	return nil
 }
 
-// RunFlow runs a child flow and waits for its result, unless WithAsync is set. The child
-// inherits this flow's priority, fair key and log attributes unless options override them.
+// RunFlow runs a child flow and waits for its result. The child inherits this flow's
+// priority, fair key and log attributes unless options override them. A WithCron schedule
+// never gives a result to wait for, so RunFlow aborts the flow; start one with StartFlow.
 func (flowCtx *FlowContext) RunFlow(request FlowRequest, options ...FlowOption) error {
-	config := DefaultFlowConfig()
-	config.Priority = flowCtx.Priority
-	config.FairKey = flowCtx.FairKey
-	maps.Copy(config.LogAttributes, flowCtx.LogAttributes)
-	config.Apply(options...)
-
-	flowName, err := handlerName("flow", request.Flow)
-	if err != nil {
-		return flowCtx.Abort(err)
-	}
-	payload, err := EncodePayload(request.Input)
-	if err != nil {
-		return flowCtx.Abort(err)
+	config := flowCtx.childFlowConfig(options)
+	if config.Cron != "" {
+		return flowCtx.Abort(errCronNeedsStartFlow)
 	}
 
 	childOptions := newChildWorkflowOptions(request.Queue, config)
 	childContext := workflow.WithChildOptions(flowCtx.Context, childOptions)
-	future := workflow.ExecuteChildWorkflow(childContext, flowName, payload, config.LogAttributes)
-
-	if config.Async {
-		return future.GetChildWorkflowExecution().Get(childContext, nil)
+	future, err := executeChildFlow(childContext, request, config)
+	if err != nil {
+		return flowCtx.Abort(err)
 	}
 
 	var result []byte
@@ -168,6 +158,48 @@ func (flowCtx *FlowContext) RunFlow(request FlowRequest, options ...FlowOption) 
 		return flowCtx.Abort(err)
 	}
 	return nil
+}
+
+// StartFlow starts a child flow and returns its ID once it has started, without waiting for
+// it to finish. The child keeps running after this flow ends. It inherits this flow's
+// priority, fair key and log attributes unless options override them.
+func (flowCtx *FlowContext) StartFlow(request FlowRequest, options ...FlowOption) (string, error) {
+	config := flowCtx.childFlowConfig(options)
+
+	childOptions := newDetachedChildWorkflowOptions(request.Queue, config)
+	childContext := workflow.WithChildOptions(flowCtx.Context, childOptions)
+	future, err := executeChildFlow(childContext, request, config)
+	if err != nil {
+		return "", flowCtx.Abort(err)
+	}
+
+	var execution workflow.Execution
+	err = future.GetChildWorkflowExecution().Get(childContext, &execution)
+	if err != nil {
+		return "", err
+	}
+	return execution.ID, nil
+}
+
+func (flowCtx *FlowContext) childFlowConfig(options []FlowOption) *FlowConfig {
+	config := DefaultFlowConfig()
+	config.Priority = flowCtx.Priority
+	config.FairKey = flowCtx.FairKey
+	maps.Copy(config.LogAttributes, flowCtx.LogAttributes)
+	config.Apply(options...)
+	return config
+}
+
+func executeChildFlow(ctx workflow.Context, request FlowRequest, config *FlowConfig) (workflow.ChildWorkflowFuture, error) {
+	flowName, err := handlerName("flow", request.Flow)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := EncodePayload(request.Input)
+	if err != nil {
+		return nil, err
+	}
+	return workflow.ExecuteChildWorkflow(ctx, flowName, payload, config.LogAttributes), nil
 }
 
 // Version lets flow code change without breaking executions already running the old code.
