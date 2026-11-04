@@ -14,10 +14,8 @@ const abortedFlowErrorType = "FlowAborted"
 // it guards.
 const DefaultFlowVersion = int(workflow.DefaultVersion)
 
-// FlowContext is what a flow receives. It is a workflow.Context, so Temporal SDK functions
-// such as workflow.Sleep accept it. The exception is workflow.WithCancel, which panics on a
-// context type it does not know, directly or through a parent. So pass ctx.Context to
-// workflow.WithCancel and to workflow.Go, whose goroutine may call it.
+// FlowContext is what a flow receives. Its Context field is the Temporal SDK's own context,
+// for SDK functions such as workflow.Sleep(ctx.Context, d).
 //
 // Temporal replays a flow's code to restore it, so flow code must be deterministic: no
 // I/O, no time.Now and no time.Sleep. Do real work in steps. Logs written during a replay
@@ -41,7 +39,9 @@ const DefaultFlowVersion = int(workflow.DefaultVersion)
 //	    return receipt, err
 //	}
 type FlowContext struct {
-	workflow.Context
+	// Context is the Temporal workflow context that RunStep and RunFlow run on.
+	Context workflow.Context
+
 	FlowInfo
 	*Logger
 

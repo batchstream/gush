@@ -6,7 +6,18 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"go.temporal.io/sdk/workflow"
 )
+
+// SDK functions such as workflow.WithCancel panic on a context type they do not know, so
+// passing a FlowContext to one has to stay a compile error.
+func TestFlowContextIsNotAWorkflowContext(t *testing.T) {
+	contextType := reflect.TypeFor[workflow.Context]()
+	if reflect.TypeFor[*FlowContext]().Implements(contextType) {
+		t.Errorf("FlowContext implements workflow.Context")
+	}
+}
 
 func TestRunFlowSendsNoRetryTypesToTemporal(t *testing.T) {
 	capture := &startCaptureClient{}

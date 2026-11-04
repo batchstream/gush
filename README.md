@@ -17,7 +17,7 @@ Two trade-offs come with that:
 - Inputs and outputs are `any`, so the compiler does not check that a flow and its step agree on a type.
 - Temporal sees compressed bytes, so its Web UI and CLI cannot show inputs and outputs as text.
 
-The SDK stays within reach: a `FlowContext` is a `workflow.Context`, so functions like `workflow.Sleep` accept it. `workflow.Go` and `workflow.WithCancel` need `ctx.Context`, the SDK's own context inside it.
+The SDK stays within reach: `ctx.Context` in a flow is the SDK's own `workflow.Context`, for functions like `workflow.Sleep`.
 
 ## Install
 
@@ -118,7 +118,7 @@ Flows and steps are registered under their bare Go function names, and can be ca
 `RunStep` and `RunFlow` run on the context their `FlowContext` holds. Code on another `workflow.Context` gets a matching `FlowContext` from `WithContext`, as a goroutine does:
 
 ```go
-group := workflow.NewWaitGroup(ctx)
+group := workflow.NewWaitGroup(ctx.Context)
 for _, item := range items {
     group.Add(1)
     workflow.Go(ctx.Context, func(g workflow.Context) {
@@ -129,7 +129,7 @@ for _, item := range items {
         }
     })
 }
-group.Wait(ctx)
+group.Wait(ctx.Context)
 ```
 
 After `CancelFlow`, anything on the flow's own context returns a canceled error. Cleanup needs a context that ignores the cancellation, and `WithWaitForCancel` so it starts after the step has ended rather than alongside it:

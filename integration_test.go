@@ -181,7 +181,7 @@ func TestNilPointerInputRunsAsEmpty(t *testing.T) {
 }
 
 func WaitingFlow(ctx *gush.FlowContext) (any, error) {
-	return nil, workflow.Sleep(ctx, 2*time.Second)
+	return nil, workflow.Sleep(ctx.Context, 2*time.Second)
 }
 
 func TestAsyncFlowReturnsBeforeItFinishes(t *testing.T) {
@@ -1008,7 +1008,7 @@ func TestFlowWrappingAStepErrorKeepsItsType(t *testing.T) {
 
 func ParallelFlow(ctx *gush.FlowContext) (any, error) {
 	total := 0
-	group := workflow.NewWaitGroup(ctx)
+	group := workflow.NewWaitGroup(ctx.Context)
 	for i := range 3 {
 		group.Add(1)
 		workflow.Go(ctx.Context, func(g workflow.Context) {
@@ -1022,7 +1022,7 @@ func ParallelFlow(ctx *gush.FlowContext) (any, error) {
 			}
 		})
 	}
-	group.Wait(ctx)
+	group.Wait(ctx.Context)
 	return total, nil
 }
 
@@ -1041,7 +1041,7 @@ func CleanupStep(ctx *gush.StepContext) (any, error) {
 }
 
 func CleanupFlow(ctx *gush.FlowContext) (any, error) {
-	err := workflow.Sleep(ctx, time.Hour)
+	err := workflow.Sleep(ctx.Context, time.Hour)
 	if !temporal.IsCanceledError(err) {
 		return nil, err
 	}
@@ -1127,7 +1127,7 @@ func TestLargeNumericAttributesSurviveEveryHop(t *testing.T) {
 
 func CancelOneStepFlow(ctx *gush.FlowContext) (any, error) {
 	var stepErr error
-	group := workflow.NewWaitGroup(ctx)
+	group := workflow.NewWaitGroup(ctx.Context)
 	group.Add(1)
 	workflow.Go(ctx.Context, func(g workflow.Context) {
 		defer group.Done()
@@ -1136,7 +1136,7 @@ func CancelOneStepFlow(ctx *gush.FlowContext) (any, error) {
 		cancel()
 		stepErr = ctx.WithContext(canceled).RunStep(DoubleStep, nil, nil)
 	})
-	group.Wait(ctx)
+	group.Wait(ctx.Context)
 
 	if !temporal.IsCanceledError(stepErr) {
 		return nil, fmt.Errorf("the step returned %v", stepErr)
