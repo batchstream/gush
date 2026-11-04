@@ -90,7 +90,7 @@ func Decode(data []byte, target any) error {
 	}
 
 	typed, ok := target.(*any)
-	if ok && !json.Valid(data) {
+	if ok && typed != nil && !json.Valid(data) {
 		*typed = string(data)
 		return nil
 	}

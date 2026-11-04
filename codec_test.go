@@ -2,6 +2,7 @@ package gush
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -90,6 +91,21 @@ func (status *codecTextStatus) UnmarshalText(data []byte) error {
 	return nil
 }
 
+type (
+	codecMarshalsJSON   string
+	codecUnmarshalsJSON string
+	codecMarshalsText   string
+	codecUnmarshalsText string
+)
+
+func (codecMarshalsJSON) MarshalJSON() ([]byte, error) { return nil, nil }
+
+func (*codecUnmarshalsJSON) UnmarshalJSON([]byte) error { return nil }
+
+func (codecMarshalsText) MarshalText() ([]byte, error) { return nil, nil }
+
+func (*codecUnmarshalsText) UnmarshalText([]byte) error { return nil }
+
 func TestEncodeAndDecodeTypesBuiltOnStringsAndBytes(t *testing.T) {
 	t.Run("a string type has no quotes", func(t *testing.T) {
 		status := codecStatus("done")
@@ -143,6 +159,19 @@ func TestEncodeAndDecodeTypesBuiltOnStringsAndBytes(t *testing.T) {
 		require.Equal(t, codecTextStatus("done"), status)
 	})
 
+	t.Run("any one conversion method keeps a type JSON", func(t *testing.T) {
+		types := []reflect.Type{
+			reflect.TypeFor[codecMarshalsJSON](),
+			reflect.TypeFor[codecUnmarshalsJSON](),
+			reflect.TypeFor[codecMarshalsText](),
+			reflect.TypeFor[codecUnmarshalsText](),
+		}
+		for _, valueType := range types {
+			require.False(t, usedAsIs(valueType), "%v", valueType)
+		}
+		require.True(t, usedAsIs(reflect.TypeFor[codecStatus]()))
+	})
+
 	t.Run("json.RawMessage stays JSON", func(t *testing.T) {
 		raw, err := Encode(json.RawMessage(`{"a": 1}`))
 		require.NoError(t, err)
@@ -156,6 +185,9 @@ func TestEncodeAndDecodeTypesBuiltOnStringsAndBytes(t *testing.T) {
 	t.Run("a nil pointer target is an error", func(t *testing.T) {
 		var status *codecStatus
 		require.Error(t, Decode([]byte("done"), status))
+
+		var anything *any
+		require.Error(t, Decode([]byte("not json"), anything))
 	})
 }
 
