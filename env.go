@@ -12,13 +12,14 @@ const (
 	envOTLPProtocol     = "OTEL_EXPORTER_OTLP_PROTOCOL"
 )
 
-// firstEnv returns the first non-empty value among the named environment variables.
-func firstEnv(names ...string) string {
-	for _, name := range names {
-		value := os.Getenv(name)
+// firstEnv returns the first of the named environment variables that has a value, and that
+// value.
+func firstEnv(names ...string) (name, value string) {
+	for _, candidate := range names {
+		value := os.Getenv(candidate)
 		if value != "" {
-			return value
+			return candidate, value
 		}
 	}
-	return ""
+	return "", ""
 }

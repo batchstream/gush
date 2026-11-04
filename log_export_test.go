@@ -362,6 +362,55 @@ func TestRejectsAnEndpointThatIsNotAURL(t *testing.T) {
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "must be an http:// or https:// URL")
+			assert.Contains(t, err.Error(), test.variable)
+			assert.Same(t, unconfiguredLogProvider, global.GetLoggerProvider())
+		})
+	}
+}
+
+func TestProtocolIgnoresCase(t *testing.T) {
+	clearLogEnv(t)
+	endpoint, collected := startGRPCCollector(t)
+	t.Setenv(envOTLPEndpoint, "http://"+endpoint)
+	t.Setenv(envOTLPProtocol, "GRPC")
+
+	exportOneRecord(t, "uppercase protocol")
+
+	assertCollected(t, collected, "uppercase protocol")
+}
+
+func TestExportsWithTheHTTPProtocolNamed(t *testing.T) {
+	clearLogEnv(t)
+	server, collected, _ := startHTTPCollector(t)
+	t.Setenv(envOTLPEndpoint, server.URL)
+	t.Setenv(envOTLPProtocol, "http/protobuf")
+
+	exportOneRecord(t, "named protocol")
+
+	assertCollected(t, collected, "named protocol")
+}
+
+func TestRejectsAProtocolItCannotSend(t *testing.T) {
+	tests := map[string]struct {
+		variable string
+		protocol string
+	}{
+		"a typo":        {variable: envOTLPProtocol, protocol: "gprc"},
+		"json":          {variable: envOTLPProtocol, protocol: "http/json"},
+		"logs variable": {variable: envOTLPLogsProtocol, protocol: "tcp"},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			clearLogEnv(t)
+			t.Setenv(envOTLPEndpoint, "http://collector:4318")
+			t.Setenv(test.variable, test.protocol)
+
+			_, err := InitLogExport()
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "is not supported")
+			assert.Contains(t, err.Error(), test.variable)
 			assert.Same(t, unconfiguredLogProvider, global.GetLoggerProvider())
 		})
 	}

@@ -279,7 +279,7 @@ Lines written while Temporal replays a flow are dropped, so each appears once. H
 
 ### Export over OTLP
 
-`gush.Dial` starts exporting when `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and `Close` flushes. A process that logs without a client calls `gush.InitLogExport()` itself. [OpenTelemetry's other variables](https://opentelemetry.io/docs/specs/otel/protocol/exporter/) set the headers and TLS, and the protocol is `http/protobuf` unless they ask for `grpc`:
+`gush.Dial` starts exporting when `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and `Close` flushes. A process that logs without a client calls `gush.InitLogExport()` itself. [OpenTelemetry's other variables](https://opentelemetry.io/docs/specs/otel/protocol/exporter/) set the headers and TLS. The protocol is `http/protobuf` unless they ask for `grpc`, and any other protocol is an error:
 
 ```sh
 OTEL_EXPORTER_OTLP_ENDPOINT=https://collector:4317
