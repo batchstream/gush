@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/temporal"
 )
 
@@ -380,5 +381,25 @@ func TestResumeErrorKeepsAnotherCause(t *testing.T) {
 
 	if got := resumeError(permanent); !errors.Is(got, cause) {
 		t.Errorf("resumeError() = %v lost its cause", got)
+	}
+}
+
+func TestIsFlowRunningError(t *testing.T) {
+	started := serviceerror.NewWorkflowExecutionAlreadyStarted("running", "", "")
+	if !IsFlowRunningError(started) {
+		t.Errorf("IsFlowRunningError(%v) = false", started)
+	}
+	wrapped := fmt.Errorf("start: %w", started)
+	if !IsFlowRunningError(wrapped) {
+		t.Errorf("IsFlowRunningError(%v) = false", wrapped)
+	}
+
+	// What a flow sees after the error crosses a step, or when it comes from a flow that ran.
+	acrossAStep := NewApplicationError("running", "WorkflowExecutionAlreadyStarted")
+	if IsFlowRunningError(acrossAStep) {
+		t.Errorf("IsFlowRunningError(%v) = true", acrossAStep)
+	}
+	if IsFlowRunningError(errors.New("plain")) {
+		t.Error("IsFlowRunningError(plain) = true")
 	}
 }

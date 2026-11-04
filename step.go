@@ -66,7 +66,8 @@ type StepInfo struct {
 // An error fails the step for good, because running its code again would repeat whatever
 // it asked for, such as a person's approval. To run the code again under the step's retry
 // policy, pass a NewApplicationError, which is a request to retry. A canceled error cancels
-// the step if it is being canceled, and otherwise fails it for good too.
+// the step if it is being canceled, and otherwise fails it for good too. An ApplicationError
+// caused by a cancellation is recorded without that cause or its details.
 func (c *Client) Resume(ctx context.Context, resumeToken string, result any, stepErr error) error {
 	token, err := decodeResumeToken(resumeToken)
 	if err != nil {
