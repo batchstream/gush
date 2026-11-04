@@ -46,6 +46,9 @@ func usedAsIs(valueType reflect.Type) bool {
 // Strings and byte slices are used as they are, including through a pointer and including
 // types built on them, unless the type has its own JSON or text methods. A nil value or nil
 // pointer encodes to nil, and everything else becomes JSON without HTML escaping.
+//
+// Adding or removing those methods changes how a type built on a string or bytes encodes, so
+// a flow in flight then reads its old value wrongly. Drain such flows first.
 func Encode(value any) ([]byte, error) {
 	if value == nil {
 		return nil, nil

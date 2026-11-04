@@ -67,8 +67,8 @@ func unsignedAttr(key string, value uint64) LogAttribute {
 // LogAttributes are the fields attached to every log record of a run.
 type LogAttributes map[string]any
 
-// UnmarshalJSON adds the attributes in data to these, keeping numbers exact. Plain JSON
-// decoding would turn every number into a float64, which damages large IDs.
+// UnmarshalJSON adds the attributes in data to these, keeping numbers exact, and null clears
+// them. Plain JSON decoding would turn every number into a float64, which damages large IDs.
 func (attributes *LogAttributes) UnmarshalJSON(data []byte) error {
 	decoded, err := decodeLogAttributes(data)
 	if err != nil {

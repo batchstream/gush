@@ -106,7 +106,7 @@ err := ctx.RunFlow(request)
 
 Flows and steps are registered under their bare Go function names, and can be called by that name as a string. Two functions with the same name in different packages collide, and `Serve` reports it. Use `NewFlowHandler` and `NewStepHandler` to choose a name, which closures and the instantiations of a generic function need too.
 
-Strings and byte slices, including types built on them, travel as raw bytes unless the type has its own JSON or text methods. Everything else travels as JSON, so read a value back as the type it was written.
+Strings and byte slices, including types built on them, travel as raw bytes unless the type has its own JSON or text methods. Everything else travels as JSON, so read a value back as the type it was written. Adding or removing those methods changes how such a type encodes, so let flows carrying it finish first.
 
 ### Parallel steps and cleanup
 
@@ -154,10 +154,10 @@ A step that is already running only finds out about the cancellation through `ct
 | `WithFairKey(key)` | both | Group to schedule fairly against, such as a tenant. |
 | `WithLogAttribute(k, v)` | both | Attribute on every log line of this run and its children. |
 | `WithLogAttributes(m)` | both | The same, for several attributes. |
-| `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's input, so concurrent callers share one run. A child flow gets an error that `gush.IsFlowRunningError` recognizes. |
+| `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's flow, input and settings, so concurrent callers share one run. A child flow gets an error that `gush.IsFlowRunningError` recognizes. |
 | `WithErrorIfRunning()` | flow | A client's `RunFlow` or `StartFlow` returns that same error instead of joining. |
 | `WithTimeout(d)` | flow | Limit on the whole execution, including every retry. |
-| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Settings left out of the JSON, or zero, use their defaults. Whoever applies it chooses `RunFlow` or `StartFlow`. |
+| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Settings left out of the JSON, or zero, use their defaults, and durations in JSON are integer nanoseconds. Whoever applies it chooses `RunFlow` or `StartFlow`. |
 | `WithQueue(q)` | step | Runs on another queue. |
 | `WithAttemptTimeout(d)` | step | Limit on each attempt, not the step as a whole. |
 | `WithHeartbeatTimeout(d)` | step | Fails an attempt that stops calling `ctx.Heartbeat()`. |

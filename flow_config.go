@@ -8,8 +8,9 @@ import (
 
 // FlowConfig holds the settings of one flow run. Its JSON form is stable, so a config can
 // be queued and applied later with WithConfig. A setting left out of the JSON, or zero,
-// uses its default, and "max_attempts": -1 means unlimited. Waiting is not part of a
-// config: whoever applies it chooses RunFlow or StartFlow.
+// uses its default, "max_attempts": -1 means unlimited, and durations are integer
+// nanoseconds. Waiting is not part of a config: whoever applies it chooses RunFlow or
+// StartFlow.
 type FlowConfig struct {
 	CommonConfig
 
@@ -78,7 +79,8 @@ func WithConfig(config *FlowConfig) FlowOption {
 
 // WithID sets the flow ID. Without it one is generated, which StartFlow returns. While a
 // flow with this ID is running, a client's RunFlow or StartFlow joins it instead of starting
-// another and ignores this run's input, so concurrent callers can share one run. Use
+// another and ignores this run's flow, input and settings, so concurrent callers can share
+// one run. RunFlow then returns that flow's result. Use
 // WithErrorIfRunning to be told instead. A child flow always gets an error, because a flow
 // cannot wait for a flow it did not start; check it with IsFlowRunningError.
 func WithID(flowID string) FlowOption {
@@ -89,8 +91,7 @@ func WithID(flowID string) FlowOption {
 }
 
 // WithErrorIfRunning makes a client's RunFlow or StartFlow return an error, which
-// IsFlowRunningError recognizes, rather than join a flow already running with this ID and
-// ignore this run's input.
+// IsFlowRunningError recognizes, rather than join a flow already running with this ID.
 func WithErrorIfRunning() FlowOption {
 	apply := func(config *FlowConfig) {
 		config.ErrorIfRunning = true

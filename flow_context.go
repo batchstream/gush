@@ -10,8 +10,8 @@ import (
 // abortedFlowErrorType is the ApplicationError type of a flow's Abort.
 const abortedFlowErrorType = "FlowAborted"
 
-// DefaultFlowVersion is what Version returns for a flow that started before the change
-// it guards.
+// DefaultFlowVersion is what Version returns for an execution that passed the call before
+// it was added.
 const DefaultFlowVersion = int(workflow.DefaultVersion)
 
 // FlowContext is what a flow receives. Its Context field is the Temporal SDK's own context,
@@ -221,8 +221,9 @@ func executeChildFlow(ctx workflow.Context, request FlowRequest, config *FlowCon
 
 // Version lets flow code change without breaking executions already running the old code.
 // The first execution of a call records maxVersion in the flow's history, and replays
-// return that recorded value. Flows that started before the call existed get
-// DefaultFlowVersion.
+// return that recorded value. An execution that passed this point before the call existed
+// gets DefaultFlowVersion, and one that reaches it later records maxVersion however long ago
+// it started.
 //
 // To replace a step:
 //
