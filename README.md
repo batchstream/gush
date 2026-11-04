@@ -17,7 +17,7 @@ Two trade-offs come with that:
 - Inputs and outputs are `any`, so the compiler does not check that a flow and its step agree on a type.
 - Temporal sees compressed bytes, so its Web UI and CLI cannot show inputs and outputs as text.
 
-The SDK stays within reach: a `FlowContext` is a `workflow.Context`, so functions like `workflow.Sleep` accept it.
+The SDK stays within reach: a `FlowContext` is a `workflow.Context`, so functions like `workflow.Sleep` accept it. `workflow.Go` and `workflow.WithCancel` need `ctx.Context`, the SDK's own context inside it.
 
 ## Install
 
@@ -121,7 +121,7 @@ Flows and steps are registered under their bare Go function names, and can be ca
 group := workflow.NewWaitGroup(ctx)
 for _, item := range items {
     group.Add(1)
-    workflow.Go(ctx, func(g workflow.Context) {
+    workflow.Go(ctx.Context, func(g workflow.Context) {
         defer group.Done()
         err := ctx.WithContext(g).RunStep(Process, item, nil)
         if err != nil {
@@ -132,17 +132,17 @@ for _, item := range items {
 group.Wait(ctx)
 ```
 
-After `CancelFlow`, anything on the flow's own context returns a canceled error. Cleanup needs a context that ignores the cancellation:
+After `CancelFlow`, anything on the flow's own context returns a canceled error. Cleanup needs a context that ignores the cancellation, and `WithWaitForCancel` so it starts after the step has ended rather than alongside it:
 
 ```go
-err := ctx.RunStep(Charge, order, &receipt)
+err := ctx.RunStep(Charge, order, &receipt, gush.WithWaitForCancel())
 if temporal.IsCanceledError(err) {
-    disconnected, _ := workflow.NewDisconnectedContext(ctx)
+    disconnected, _ := workflow.NewDisconnectedContext(ctx.Context)
     return nil, ctx.WithContext(disconnected).RunStep(Refund, order, nil)
 }
 ```
 
-A step that is already running only finds out about the cancellation through `ctx.Heartbeat()`, so one that should stop early needs `WithHeartbeatTimeout` and regular heartbeats.
+A step that is already running only finds out about the cancellation through `ctx.Heartbeat()`, and `WithHeartbeatTimeout` makes that prompt. It should then return on `ctx.Done()`.
 
 ### Options
 
@@ -159,7 +159,7 @@ A step that is already running only finds out about the cancellation through `ct
 | `WithFairKey(key)` | both | Group to schedule fairly against, such as a tenant. |
 | `WithLogAttribute(k, v)` | both | Attribute on every log line of this run and its children. |
 | `WithLogAttributes(m)` | both | The same, for several attributes. |
-| `WithID(id)` | flow | Flow ID. Otherwise one is generated and not returned, so set one to refer to the flow later. A flow already running with this ID is joined, and this run's input is ignored. |
+| `WithID(id)` | flow | Flow ID. Otherwise one is generated and not returned, so set one to refer to the flow later. A client's `RunFlow` joins a flow already running with this ID and ignores this run's input, and a child flow gets an error. |
 | `WithTimeout(d)` | flow | Limit on the whole execution, including every retry and every scheduled run. |
 | `WithCron(expr)` | flow | Schedule in UTC. Use with `WithAsync`. |
 | `WithAsync()` | flow | Returns once started. An async child outlives its parent. |
@@ -168,6 +168,7 @@ A step that is already running only finds out about the cancellation through `ct
 | `WithAttemptTimeout(d)` | step | Limit on each attempt, not the step as a whole. |
 | `WithHeartbeatTimeout(d)` | step | Fails an attempt that stops calling `ctx.Heartbeat()`. |
 | `WithPickupTimeout(d)` | step | Fails if no worker picks the step up in time. |
+| `WithWaitForCancel()` | step | When the flow is canceled, waits for the running step to end instead of returning at once. |
 
 ## Retries and errors
 
