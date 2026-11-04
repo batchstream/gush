@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"reflect"
 	"strings"
@@ -61,9 +62,9 @@ var logExport struct {
 
 // InitLogExport starts exporting logs over OTLP when OTEL_EXPORTER_OTLP_LOGS_ENDPOINT or
 // OTEL_EXPORTER_OTLP_ENDPOINT is set, and returns a function that flushes them and stops.
-// OpenTelemetry's other standard variables set the protocol, headers and TLS, and the
-// default protocol is http/protobuf. Dial calls it, so call it directly only for a process
-// that logs without a Client.
+// The endpoint must be an http:// or https:// URL. OpenTelemetry's other standard variables
+// set the protocol, headers and TLS, and the default protocol is http/protobuf. Dial calls
+// it, so call it directly only for a process that logs without a Client.
 //
 // A LoggerProvider the host already set with OpenTelemetry's global.SetLoggerProvider
 // always wins, and InitLogExport leaves it alone. Importing gush never changes the global
@@ -127,15 +128,16 @@ func releaseLogExport() {
 }
 
 // newLogExporterFromEnv returns nil when no endpoint is configured. Otherwise the exporter
-// reads OpenTelemetry's standard variables itself. It accepts an endpoint with no scheme,
-// such as collector:4318, and then loses every record, so that is an error here.
+// reads OpenTelemetry's standard variables itself. It accepts a malformed endpoint, such as
+// collector:4318, and then loses every record, so that is an error here.
 func newLogExporterFromEnv(ctx context.Context) (sdklog.Exporter, error) {
 	endpoint := firstEnv(envOTLPLogsEndpoint, envOTLPEndpoint)
 	if endpoint == "" {
 		return nil, nil
 	}
-	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
-		return nil, fmt.Errorf("gush: OTLP log endpoint %q must start with http:// or https://", endpoint)
+	parsed, err := url.Parse(endpoint)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
+		return nil, fmt.Errorf("gush: OTLP log endpoint %q must be an http:// or https:// URL with a host", endpoint)
 	}
 
 	if firstEnv(envOTLPLogsProtocol, envOTLPProtocol) == "grpc" {
@@ -146,7 +148,15 @@ func newLogExporterFromEnv(ctx context.Context) (sdklog.Exporter, error) {
 		return exporter, nil
 	}
 
-	exporter, err := otlploghttp.New(ctx)
+	// The exporter appends /v1/logs to the general variable as written, so a trailing slash
+	// would post to //v1/logs. The logs variable is used as written, slash included.
+	var options []otlploghttp.Option
+	if os.Getenv(envOTLPLogsEndpoint) == "" && strings.HasSuffix(parsed.Path, "/") {
+		logsPath := strings.TrimRight(parsed.Path, "/") + "/v1/logs"
+		options = append(options, otlploghttp.WithURLPath(logsPath))
+	}
+
+	exporter, err := otlploghttp.New(ctx, options...)
 	if err != nil {
 		return nil, fmt.Errorf("gush: create OTLP/HTTP log exporter: %w", err)
 	}

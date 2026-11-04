@@ -2,11 +2,15 @@ package gush
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +21,7 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	logcollector "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -69,6 +74,15 @@ func (collected *collectedLogs) attributesOf(body string) (map[string]string, bo
 func startHTTPCollector(t *testing.T) (*httptest.Server, *collectedLogs, *[]string) {
 	t.Helper()
 
+	server, collected, paths := newHTTPCollector(t)
+	server.Start()
+	return server, collected, paths
+}
+
+// newHTTPCollector returns a fake OTLP/HTTP collector for the caller to start.
+func newHTTPCollector(t *testing.T) (*httptest.Server, *collectedLogs, *[]string) {
+	t.Helper()
+
 	collected := newCollectedLogs()
 	paths := &[]string{}
 	var pathsMu sync.Mutex
@@ -94,7 +108,7 @@ func startHTTPCollector(t *testing.T) (*httptest.Server, *collectedLogs, *[]stri
 		writer.WriteHeader(http.StatusOK)
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(handler))
+	server := httptest.NewUnstartedServer(http.HandlerFunc(handler))
 	t.Cleanup(server.Close)
 	return server, collected, paths
 }
@@ -111,14 +125,14 @@ func (collector *grpcCollector) Export(_ context.Context, request *logcollector.
 }
 
 // startGRPCCollector runs a fake OTLP/gRPC collector and returns its host:port.
-func startGRPCCollector(t *testing.T) (string, *collectedLogs) {
+func startGRPCCollector(t *testing.T, options ...grpc.ServerOption) (string, *collectedLogs) {
 	t.Helper()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
 	collected := newCollectedLogs()
-	server := grpc.NewServer()
+	server := grpc.NewServer(options...)
 	collector := &grpcCollector{collected: collected}
 	logcollector.RegisterLogsServiceServer(server, collector)
 
@@ -133,6 +147,17 @@ func startGRPCCollector(t *testing.T) (string, *collectedLogs) {
 	})
 
 	return listener.Addr().String(), collected
+}
+
+// trustCertificate makes the exporter trust a test collector's certificate.
+func trustCertificate(t *testing.T, certificate *x509.Certificate) {
+	t.Helper()
+
+	block := &pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw}
+	path := filepath.Join(t.TempDir(), "collector.pem")
+	err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600)
+	require.NoError(t, err)
+	t.Setenv("OTEL_EXPORTER_OTLP_CERTIFICATE", path)
 }
 
 // exportOneRecord logs through a running export and flushes it to the collector.
@@ -206,26 +231,137 @@ func TestExportsOverGRPC(t *testing.T) {
 	assertCollected(t, collected, "over grpc")
 }
 
-func TestRejectsAnEndpointThatIsNotAURL(t *testing.T) {
+func TestExportsOverHTTPS(t *testing.T) {
+	clearLogEnv(t)
+	server, collected, _ := newHTTPCollector(t)
+	server.StartTLS()
+	t.Setenv(envOTLPEndpoint, server.URL)
+	trustCertificate(t, server.Certificate())
+
+	exportOneRecord(t, "over https")
+
+	assertCollected(t, collected, "over https")
+}
+
+// This is the configuration the README shows.
+func TestExportsOverGRPCWithTLS(t *testing.T) {
+	clearLogEnv(t)
+	certificates := httptest.NewTLSServer(http.NotFoundHandler())
+	defer certificates.Close()
+	serverTLS := credentials.NewServerTLSFromCert(&certificates.TLS.Certificates[0])
+	endpoint, collected := startGRPCCollector(t, grpc.Creds(serverTLS))
+	t.Setenv(envOTLPEndpoint, "https://"+endpoint)
+	t.Setenv(envOTLPProtocol, "grpc")
+	trustCertificate(t, certificates.Certificate())
+
+	exportOneRecord(t, "over grpc with tls")
+
+	assertCollected(t, collected, "over grpc with tls")
+}
+
+func TestExportsWithAnUppercaseScheme(t *testing.T) {
+	clearLogEnv(t)
+	server, collected, _ := startHTTPCollector(t)
+	t.Setenv(envOTLPEndpoint, "HTTP://"+server.Listener.Addr().String())
+
+	exportOneRecord(t, "uppercase scheme")
+
+	assertCollected(t, collected, "uppercase scheme")
+}
+
+func TestGeneralEndpointGetsTheLogsPath(t *testing.T) {
 	tests := map[string]struct {
-		variable string
-		protocol string
+		suffix string
+		path   string
 	}{
-		"http":          {variable: envOTLPEndpoint},
-		"grpc":          {variable: envOTLPEndpoint, protocol: "grpc"},
-		"logs variable": {variable: envOTLPLogsEndpoint},
+		"no path":                {suffix: "", path: "/v1/logs"},
+		"only a slash":           {suffix: "/", path: "/v1/logs"},
+		"a path":                 {suffix: "/base", path: "/base/v1/logs"},
+		"a path ending in slash": {suffix: "/base/", path: "/base/v1/logs"},
 	}
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			clearLogEnv(t)
-			t.Setenv(test.variable, "collector:4318")
+			server, collected, paths := startHTTPCollector(t)
+			t.Setenv(envOTLPEndpoint, server.URL+test.suffix)
+
+			exportOneRecord(t, "general endpoint")
+
+			assertCollected(t, collected, "general endpoint")
+			assert.Equal(t, []string{test.path}, *paths)
+		})
+	}
+}
+
+func TestLogsEndpointWinsAndIsUsedAsWritten(t *testing.T) {
+	clearLogEnv(t)
+	general, generalCollected, _ := startHTTPCollector(t)
+	logs, logsCollected, paths := startHTTPCollector(t)
+	t.Setenv(envOTLPEndpoint, general.URL)
+	t.Setenv(envOTLPLogsEndpoint, logs.URL+"/ingest/")
+
+	exportOneRecord(t, "logs endpoint")
+
+	assertCollected(t, logsCollected, "logs endpoint")
+	assert.Equal(t, []string{"/ingest/"}, *paths)
+	_, reachedGeneral := generalCollected.attributesOf("logs endpoint")
+	assert.False(t, reachedGeneral)
+}
+
+// The exporter never reads the general variable here, so its value does not matter.
+func TestOnlyTheEndpointInUseIsChecked(t *testing.T) {
+	clearLogEnv(t)
+	server, collected, _ := startHTTPCollector(t)
+	t.Setenv(envOTLPEndpoint, "collector:4318")
+	t.Setenv(envOTLPLogsEndpoint, server.URL+"/v1/logs")
+
+	exportOneRecord(t, "endpoint in use")
+
+	assertCollected(t, collected, "endpoint in use")
+}
+
+func TestLogsProtocolWinsOverTheGeneralOne(t *testing.T) {
+	clearLogEnv(t)
+	server, collected, _ := startHTTPCollector(t)
+	t.Setenv(envOTLPEndpoint, server.URL)
+	t.Setenv(envOTLPProtocol, "grpc")
+	t.Setenv(envOTLPLogsProtocol, "http/protobuf")
+
+	exportOneRecord(t, "logs protocol")
+
+	assertCollected(t, collected, "logs protocol")
+}
+
+func TestRejectsAnEndpointThatIsNotAURL(t *testing.T) {
+	tests := map[string]struct {
+		variable string
+		protocol string
+		endpoint string
+	}{
+		"no scheme":                {variable: envOTLPEndpoint, endpoint: "collector:4318"},
+		"an address":               {variable: envOTLPEndpoint, endpoint: "127.0.0.1:4318"},
+		"no scheme over grpc":      {variable: envOTLPEndpoint, protocol: "grpc", endpoint: "collector:4317"},
+		"no scheme, logs variable": {variable: envOTLPLogsEndpoint, endpoint: "collector:4318"},
+		"another scheme":           {variable: envOTLPEndpoint, endpoint: "ftp://collector:4318"},
+		"no host":                  {variable: envOTLPEndpoint, endpoint: "http://"},
+		"no host over https":       {variable: envOTLPEndpoint, endpoint: "https://"},
+		"only a port":              {variable: envOTLPEndpoint, endpoint: "http://:4318"},
+		"a bad port":               {variable: envOTLPEndpoint, endpoint: "http://collector:43x8"},
+		"a space in the host":      {variable: envOTLPEndpoint, endpoint: "http://coll ector:4317"},
+		"a trailing newline":       {variable: envOTLPEndpoint, endpoint: "http://collector:4318\n"},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			clearLogEnv(t)
+			t.Setenv(test.variable, test.endpoint)
 			t.Setenv(envOTLPProtocol, test.protocol)
 
 			_, err := InitLogExport()
 
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "must start with http")
+			assert.Contains(t, err.Error(), "must be an http:// or https:// URL")
 			assert.Same(t, unconfiguredLogProvider, global.GetLoggerProvider())
 		})
 	}
