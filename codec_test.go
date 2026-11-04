@@ -1,6 +1,9 @@
 package gush
 
 import (
+	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -68,6 +71,123 @@ func TestEncode(t *testing.T) {
 		result, err := Encode(42)
 		require.NoError(t, err)
 		require.Equal(t, "42", string(result))
+	})
+}
+
+type (
+	codecStatus string
+	codecBytes  []byte
+)
+
+// codecTextStatus chooses its own JSON form through its text methods.
+type codecTextStatus string
+
+func (status codecTextStatus) MarshalText() ([]byte, error) {
+	return []byte("text:" + string(status)), nil
+}
+
+func (status *codecTextStatus) UnmarshalText(data []byte) error {
+	*status = codecTextStatus(strings.TrimPrefix(string(data), "text:"))
+	return nil
+}
+
+type (
+	codecMarshalsJSON   string
+	codecUnmarshalsJSON string
+	codecMarshalsText   string
+	codecUnmarshalsText string
+)
+
+func (codecMarshalsJSON) MarshalJSON() ([]byte, error) { return nil, nil }
+
+func (*codecUnmarshalsJSON) UnmarshalJSON([]byte) error { return nil }
+
+func (codecMarshalsText) MarshalText() ([]byte, error) { return nil, nil }
+
+func (*codecUnmarshalsText) UnmarshalText([]byte) error { return nil }
+
+func TestEncodeAndDecodeTypesBuiltOnStringsAndBytes(t *testing.T) {
+	t.Run("a string type has no quotes", func(t *testing.T) {
+		status := codecStatus("done")
+		for _, value := range []any{status, &status} {
+			raw, err := Encode(value)
+			require.NoError(t, err)
+			require.Equal(t, "done", string(raw))
+		}
+	})
+
+	t.Run("a string type reads back as itself or as a string", func(t *testing.T) {
+		raw, err := Encode(codecStatus("done"))
+		require.NoError(t, err)
+
+		var status codecStatus
+		require.NoError(t, Decode(raw, &status))
+		require.Equal(t, codecStatus("done"), status)
+
+		var plain string
+		require.NoError(t, Decode(raw, &plain))
+		require.Equal(t, "done", plain)
+	})
+
+	t.Run("a string reads back as a string type", func(t *testing.T) {
+		var status codecStatus
+		require.NoError(t, Decode([]byte("done"), &status))
+		require.Equal(t, codecStatus("done"), status)
+	})
+
+	t.Run("a bytes type is not base64", func(t *testing.T) {
+		original := codecBytes("raw bytes")
+		raw, err := Encode(original)
+		require.NoError(t, err)
+		require.Equal(t, "raw bytes", string(raw))
+
+		var decoded codecBytes
+		require.NoError(t, Decode(raw, &decoded))
+		require.Equal(t, original, decoded)
+
+		raw[0] = 'x'
+		require.Equal(t, byte('r'), decoded[0], "Decode must copy the data")
+	})
+
+	t.Run("a type with text methods stays JSON", func(t *testing.T) {
+		raw, err := Encode(codecTextStatus("done"))
+		require.NoError(t, err)
+		require.Equal(t, `"text:done"`, string(raw))
+
+		var status codecTextStatus
+		require.NoError(t, Decode(raw, &status))
+		require.Equal(t, codecTextStatus("done"), status)
+	})
+
+	t.Run("any one conversion method keeps a type JSON", func(t *testing.T) {
+		types := []reflect.Type{
+			reflect.TypeFor[codecMarshalsJSON](),
+			reflect.TypeFor[codecUnmarshalsJSON](),
+			reflect.TypeFor[codecMarshalsText](),
+			reflect.TypeFor[codecUnmarshalsText](),
+		}
+		for _, valueType := range types {
+			require.False(t, usedAsIs(valueType), "%v", valueType)
+		}
+		require.True(t, usedAsIs(reflect.TypeFor[codecStatus]()))
+	})
+
+	t.Run("json.RawMessage stays JSON", func(t *testing.T) {
+		raw, err := Encode(json.RawMessage(`{"a": 1}`))
+		require.NoError(t, err)
+		require.Equal(t, `{"a":1}`, string(raw))
+
+		var message json.RawMessage
+		require.NoError(t, Decode(raw, &message))
+		require.Equal(t, `{"a":1}`, string(message))
+	})
+
+	t.Run("a nil pointer target is an error", func(t *testing.T) {
+		var status *codecStatus
+		require.Error(t, Decode([]byte("done"), status))
+
+		var anything *any
+		require.Error(t, Decode([]byte("not json"), anything))
 	})
 }
 

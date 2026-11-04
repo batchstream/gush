@@ -40,6 +40,14 @@ func IsPermanentError(err error) bool {
 	return false
 }
 
+// IsFlowRunningError reports whether a flow did not start because one with the same ID is
+// running. A child flow gets this error, and so does a client using WithErrorIfRunning. A
+// step using such a client must check the error itself, because a flow cannot recognize it
+// after it crosses the step.
+func IsFlowRunningError(err error) bool {
+	return temporal.IsWorkflowExecutionAlreadyStartedError(err)
+}
+
 // IsPanicError reports whether err is a PanicError.
 func IsPanicError(err error) bool {
 	return temporal.IsPanicError(err)

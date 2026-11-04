@@ -99,6 +99,11 @@ func (c *Client) startFlow(ctx context.Context, request FlowRequest, config *Flo
 		return nil, err
 	}
 
+	err = config.validate()
+	if err != nil {
+		return nil, err
+	}
+
 	startOptions := newStartWorkflowOptions(request.Queue, config)
 	return c.temporalClient.ExecuteWorkflow(ctx, startOptions, flowName, payload, config.LogAttributes)
 }

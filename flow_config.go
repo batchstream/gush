@@ -1,22 +1,16 @@
 package gush
 
 import (
-	"bytes"
-	"encoding/json"
 	"maps"
-	"reflect"
 	"slices"
 	"time"
 )
 
 // FlowConfig holds the settings of one flow run. Its JSON form is stable, so a config can
-// be queued and applied later with WithConfig. A field left out of the JSON keeps its
-// default, while a zero written out is taken as it is, so "max_attempts": 0 still
-// means unlimited. Waiting is not part of a config: whoever applies it chooses RunFlow or
+// be queued and applied later with WithConfig. A setting left out of the JSON, or zero,
+// uses its default, "max_attempts": -1 means unlimited, and durations are integer
+// nanoseconds. Waiting is not part of a config: whoever applies it chooses RunFlow or
 // StartFlow.
-//
-// Like time.Time, it decodes itself from JSON, so a struct that embeds it would decode
-// through that method and lose its own fields. Hold it in a named field to decode it.
 type FlowConfig struct {
 	CommonConfig
 
@@ -25,6 +19,10 @@ type FlowConfig struct {
 
 	// Timeout limits the whole execution, including every retry. Zero means unlimited.
 	Timeout time.Duration `json:"timeout"`
+
+	// ErrorIfRunning makes a client's RunFlow or StartFlow fail rather than join a flow
+	// already running with this ID. See WithErrorIfRunning.
+	ErrorIfRunning bool `json:"error_if_running"`
 }
 
 // DefaultFlowConfig returns the settings a flow run starts from: one attempt, medium
@@ -34,34 +32,10 @@ func DefaultFlowConfig() *FlowConfig {
 	config.InitialInterval = 1 * time.Second
 	config.BackoffCoefficient = 2.0
 	config.MaxInterval = 100 * time.Second
-	config.MaxAttempts = 1
+	config.MaxAttempts = defaultFlowAttempts
 	config.Priority = PriorityMedium
 	config.LogAttributes = make(map[string]any)
 	return config
-}
-
-// UnmarshalJSON starts an empty config from DefaultFlowConfig, because an attempt count left
-// out of the JSON would otherwise read as zero, which means unlimited retries. Priority
-// stays empty unless the JSON sets it, so that WithConfig keeps what a child flow inherits.
-// A config that already holds settings keeps those the JSON leaves out.
-func (config *FlowConfig) UnmarshalJSON(data []byte) error {
-	type plainFlowConfig FlowConfig
-	decoded := plainFlowConfig(*config)
-	if reflect.ValueOf(*config).IsZero() {
-		decoded = plainFlowConfig(*DefaultFlowConfig())
-		decoded.Priority = ""
-	}
-
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	err := decoder.Decode(&decoded)
-	if err != nil {
-		return err
-	}
-	resolveNumbers(decoded.LogAttributes)
-
-	*config = FlowConfig(decoded)
-	return nil
 }
 
 // Apply applies options to config in order.
@@ -105,10 +79,22 @@ func WithConfig(config *FlowConfig) FlowOption {
 
 // WithID sets the flow ID. Without it one is generated, which StartFlow returns. While a
 // flow with this ID is running, a client's RunFlow or StartFlow joins it instead of starting
-// another and ignores this run's input, and a child flow gets an error.
+// another and ignores this run's flow, input and settings, so concurrent callers can share
+// one run. RunFlow then returns that flow's result. Use
+// WithErrorIfRunning to be told instead. A child flow always gets an error, because a flow
+// cannot wait for a flow it did not start; check it with IsFlowRunningError.
 func WithID(flowID string) FlowOption {
 	apply := func(config *FlowConfig) {
 		config.ID = flowID
+	}
+	return flowOption(apply)
+}
+
+// WithErrorIfRunning makes a client's RunFlow or StartFlow return an error, which
+// IsFlowRunningError recognizes, rather than join a flow already running with this ID.
+func WithErrorIfRunning() FlowOption {
+	apply := func(config *FlowConfig) {
+		config.ErrorIfRunning = true
 	}
 	return flowOption(apply)
 }

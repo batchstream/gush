@@ -131,28 +131,36 @@ func releaseLogExport() {
 // reads OpenTelemetry's standard variables itself. It accepts a malformed endpoint, such as
 // collector:4318, and then loses every record, so that is an error here.
 func newLogExporterFromEnv(ctx context.Context) (sdklog.Exporter, error) {
-	endpoint := firstEnv(envOTLPLogsEndpoint, envOTLPEndpoint)
+	variable, endpoint := firstEnv(envOTLPLogsEndpoint, envOTLPEndpoint)
 	if endpoint == "" {
 		return nil, nil
 	}
 	parsed, err := url.Parse(endpoint)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
-		return nil, fmt.Errorf("gush: OTLP log endpoint %q must be an http:// or https:// URL with a host", endpoint)
+		return nil, fmt.Errorf("gush: %s=%q must be an http:// or https:// URL with a host", variable, endpoint)
 	}
 
-	if firstEnv(envOTLPLogsProtocol, envOTLPProtocol) == "grpc" {
+	variable, protocol := firstEnv(envOTLPLogsProtocol, envOTLPProtocol)
+	switch strings.ToLower(protocol) {
+	case "grpc":
 		exporter, err := otlploggrpc.New(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("gush: create OTLP/gRPC log exporter: %w", err)
 		}
 		return exporter, nil
+	case "", "http/protobuf":
+		return newHTTPLogExporter(ctx, parsed)
+	default:
+		return nil, fmt.Errorf("gush: %s=%q is not supported, use grpc or http/protobuf", variable, protocol)
 	}
+}
 
+func newHTTPLogExporter(ctx context.Context, endpoint *url.URL) (sdklog.Exporter, error) {
 	// The exporter appends /v1/logs to the general variable as written, so a trailing slash
 	// would post to //v1/logs. The logs variable is used as written, slash included.
 	var options []otlploghttp.Option
-	if os.Getenv(envOTLPLogsEndpoint) == "" && strings.HasSuffix(parsed.Path, "/") {
-		logsPath := strings.TrimRight(parsed.Path, "/") + "/v1/logs"
+	if os.Getenv(envOTLPLogsEndpoint) == "" && strings.HasSuffix(endpoint.Path, "/") {
+		logsPath := strings.TrimRight(endpoint.Path, "/") + "/v1/logs"
 		options = append(options, otlploghttp.WithURLPath(logsPath))
 	}
 

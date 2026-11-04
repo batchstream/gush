@@ -17,7 +17,7 @@ type CommonConfig struct {
 	FairKey string `json:"fair_key"`
 
 	// LogAttributes are attached to every log record and inherited by child flows and steps.
-	LogAttributes map[string]any `json:"log_attributes"`
+	LogAttributes LogAttributes `json:"log_attributes"`
 }
 
 // FlowOption customizes a flow run.
@@ -79,8 +79,9 @@ func WithMaxInterval(interval time.Duration) Option {
 	return commonOption(apply)
 }
 
-// WithMaxAttempts sets the total number of attempts, including the first. Zero means
-// unlimited.
+// WithMaxAttempts sets the total number of attempts, including the first. Zero means one for
+// a flow and ten for a step. Use UnlimitedAttempts to keep retrying. Any other negative
+// number makes RunFlow, StartFlow or RunStep return an error.
 func WithMaxAttempts(attempts int32) Option {
 	apply := func(config *CommonConfig) {
 		config.MaxAttempts = attempts

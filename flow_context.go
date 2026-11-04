@@ -10,8 +10,8 @@ import (
 // abortedFlowErrorType is the ApplicationError type of a flow's Abort.
 const abortedFlowErrorType = "FlowAborted"
 
-// DefaultFlowVersion is what Version returns for a flow that started before the change
-// it guards.
+// DefaultFlowVersion is what Version returns for an execution that passed the call before
+// it was added.
 const DefaultFlowVersion = int(workflow.DefaultVersion)
 
 // FlowContext is what a flow receives. Its Context field is the Temporal SDK's own context,
@@ -111,6 +111,10 @@ func (flowCtx *FlowContext) RunStep(step any, input, output any, options ...Step
 	if err != nil {
 		return flowCtx.Abort(err)
 	}
+	err = config.validate()
+	if err != nil {
+		return flowCtx.Abort(err)
+	}
 	payload, err := EncodePayload(input)
 	if err != nil {
 		return flowCtx.Abort(err)
@@ -136,6 +140,10 @@ func (flowCtx *FlowContext) RunStep(step any, input, output any, options ...Step
 // priority, fair key and log attributes unless options override them.
 func (flowCtx *FlowContext) RunFlow(request FlowRequest, options ...FlowOption) error {
 	config := flowCtx.childFlowConfig(options)
+	err := config.validate()
+	if err != nil {
+		return flowCtx.Abort(err)
+	}
 
 	childOptions := newChildWorkflowOptions(request.Queue, config)
 	childContext := workflow.WithChildOptions(flowCtx.Context, childOptions)
@@ -168,6 +176,10 @@ func (flowCtx *FlowContext) StartFlow(request FlowRequest, options ...FlowOption
 		return "", err
 	}
 	config := flowCtx.childFlowConfig(options)
+	err = config.validate()
+	if err != nil {
+		return "", flowCtx.Abort(err)
+	}
 
 	// Canceling a context also cancels the children started on it.
 	detached, _ := workflow.NewDisconnectedContext(flowCtx.Context)
@@ -209,12 +221,13 @@ func executeChildFlow(ctx workflow.Context, request FlowRequest, config *FlowCon
 
 // Version lets flow code change without breaking executions already running the old code.
 // The first execution of a call records maxVersion in the flow's history, and replays
-// return that recorded value. Flows that started before the call existed get
-// DefaultFlowVersion.
+// return that recorded value. An execution that passed this point before the call existed
+// gets DefaultFlowVersion, and one that reaches it later records maxVersion however long ago
+// it started.
 //
 // To replace a step:
 //
-//	v := ctx.Version("payment-provider", 1)
+//	v := ctx.Version("payment-provider", gush.DefaultFlowVersion, 1)
 //	if v == gush.DefaultFlowVersion {
 //	    err = ctx.RunStep(OldCharge, input, &output)
 //	} else {
@@ -222,12 +235,12 @@ func executeChildFlow(ctx workflow.Context, request FlowRequest, config *FlowCon
 //	}
 //
 // To change the same code again, keep the tag, raise maxVersion and add a branch. Once no
-// execution can reach an old branch, delete it but keep the Version call. Version accepts
-// every recorded version, so a stale execution would then run the newer branch. To make one
-// fail instead, call the SDK's workflow.GetVersion with a higher minimum.
-func (flowCtx *FlowContext) Version(tag string, maxVersion int) int {
-	minSupported := workflow.Version(DefaultFlowVersion)
-	version := workflow.GetVersion(flowCtx.Context, tag, minSupported, workflow.Version(maxVersion))
+// execution can reach an old branch, delete it, keep the Version call and raise minVersion
+// to the oldest version left. An execution that recorded an older version then stops making
+// progress, with its flow tasks failing, until code that supports it is deployed. It never
+// runs a branch it did not take.
+func (flowCtx *FlowContext) Version(tag string, minVersion, maxVersion int) int {
+	version := workflow.GetVersion(flowCtx.Context, tag, workflow.Version(minVersion), workflow.Version(maxVersion))
 	return int(version)
 }
 

@@ -13,18 +13,17 @@ var typeArguments = regexp.MustCompile(`\[[^\]]*\]`)
 
 // functionName returns the name a flow or step function registers under, which is its
 // bare Go name without package, receiver or type arguments, so every instantiation of a
-// generic function shares one name. A string is its own name, and anything that is not a
-// function has no name.
+// generic function shares one name. A string, or a type built on one, is its own name, and
+// anything that is not a function has no name.
 func functionName(function any) string {
-	name, ok := function.(string)
-	if ok {
-		return name
-	}
 	if function == nil {
 		return ""
 	}
 
 	value := reflect.ValueOf(function)
+	if value.Kind() == reflect.String {
+		return value.String()
+	}
 	if value.Kind() != reflect.Func || value.Pointer() == 0 {
 		return ""
 	}

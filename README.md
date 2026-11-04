@@ -106,7 +106,7 @@ err := ctx.RunFlow(request)
 
 Flows and steps are registered under their bare Go function names, and can be called by that name as a string. Two functions with the same name in different packages collide, and `Serve` reports it. Use `NewFlowHandler` and `NewStepHandler` to choose a name, which closures and the instantiations of a generic function need too.
 
-`string` and `[]byte` travel as raw bytes and everything else as JSON, so read a value back as the type it was written.
+Strings and byte slices, including types built on them, travel as raw bytes unless the type has its own JSON or text methods. Everything else travels as JSON, so read a value back as the type it was written. Adding or removing those methods changes how such a type encodes, so let flows carrying it finish first.
 
 ### Parallel steps and cleanup
 
@@ -143,7 +143,7 @@ A step that is already running only finds out about the cancellation through `ct
 
 | Option | Applies to | Effect |
 |---|---|---|
-| `WithMaxAttempts(n)` | both | Total attempts, including the first. Zero means unlimited. |
+| `WithMaxAttempts(n)` | both | Total attempts, including the first. Zero means the default, and `gush.UnlimitedAttempts` keeps retrying. Any other negative number is an error. |
 | `WithInitialInterval(d)` | both | Delay before the first retry. |
 | `WithBackoffCoefficient(f)` | both | Multiplier on the delay after each retry. |
 | `WithMaxInterval(d)` | both | Cap on the delay between retries. |
@@ -154,9 +154,10 @@ A step that is already running only finds out about the cancellation through `ct
 | `WithFairKey(key)` | both | Group to schedule fairly against, such as a tenant. |
 | `WithLogAttribute(k, v)` | both | Attribute on every log line of this run and its children. |
 | `WithLogAttributes(m)` | both | The same, for several attributes. |
-| `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's input, and a child flow gets an error. |
+| `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's flow, input and settings, so concurrent callers share one run. A child flow gets an error that `gush.IsFlowRunningError` recognizes. |
+| `WithErrorIfRunning()` | flow | A client's `RunFlow` or `StartFlow` returns that same error instead of joining. |
 | `WithTimeout(d)` | flow | Limit on the whole execution, including every retry. |
-| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Fields left out of the JSON keep their defaults. Whoever applies it chooses `RunFlow` or `StartFlow`. |
+| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Settings left out of the JSON, or zero, use their defaults, and durations in JSON are integer nanoseconds. Whoever applies it chooses `RunFlow` or `StartFlow`. |
 | `WithQueue(q)` | step | Runs on another queue. |
 | `WithAttemptTimeout(d)` | step | Limit on each attempt, not the step as a whole. |
 | `WithHeartbeatTimeout(d)` | step | Fails an attempt that stops calling `ctx.Heartbeat()`. |
@@ -227,14 +228,14 @@ err = client.Resume(ctx, resumeToken, decision, nil)
 
 **Set `WithAttemptTimeout` to the longest acceptable wait.** The step's timeout keeps running while it is suspended, and when it expires the step retries and runs its code again, sending a second request. The default is 2 minutes and 10 attempts. Use `WithMaxAttempts(1)` unless running the code twice is safe.
 
-An error passed to `Resume` counts as a failed attempt, so a plain error runs the code again too. To reject for good, pass `gush.NewPermanentError("rejected", "Rejected", nil)`.
+An error passed to `Resume` fails the step for good, so a rejection does not send the request again. To run the code again under the step's retry policy, pass a `gush.NewApplicationError`. A canceled error cancels the step if it is being canceled, and otherwise fails it for good too.
 
 ## Changing running flows
 
 Flows can run for a long time, and a replay must take the same path it took originally. `Version` keeps old executions on the old code.
 
 ```go
-v := ctx.Version("payment-provider", 1)
+v := ctx.Version("payment-provider", gush.DefaultFlowVersion, 1)
 if v == gush.DefaultFlowVersion {
     err = ctx.RunStep(OldCharge, input, &output)
 } else {
@@ -242,7 +243,7 @@ if v == gush.DefaultFlowVersion {
 }
 ```
 
-`Version` accepts every recorded version, so once an old branch is deleted, an execution that recorded it runs the newer one. To make such an execution fail instead, call the SDK's `workflow.GetVersion` with a higher minimum.
+The second argument is the oldest version the code still supports. Once no execution can reach an old branch, delete it and raise that minimum, here with `ctx.Version("payment-provider", 1, 1)`. An execution that recorded something older then stops making progress, with its flow tasks failing, until code that supports it is deployed. It never runs a branch it did not take.
 
 ## Long-running flows
 
@@ -279,7 +280,7 @@ Lines written while Temporal replays a flow are dropped, so each appears once. H
 
 ### Export over OTLP
 
-`gush.Dial` starts exporting when `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and `Close` flushes. A process that logs without a client calls `gush.InitLogExport()` itself. [OpenTelemetry's other variables](https://opentelemetry.io/docs/specs/otel/protocol/exporter/) set the headers and TLS, and the protocol is `http/protobuf` unless they ask for `grpc`:
+`gush.Dial` starts exporting when `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and `Close` flushes. A process that logs without a client calls `gush.InitLogExport()` itself. [OpenTelemetry's other variables](https://opentelemetry.io/docs/specs/otel/protocol/exporter/) set the headers and TLS. The protocol is `http/protobuf` unless they ask for `grpc`, and any other protocol is an error:
 
 ```sh
 OTEL_EXPORTER_OTLP_ENDPOINT=https://collector:4317

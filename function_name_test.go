@@ -46,6 +46,14 @@ type genericTestHandlers[T any] struct{}
 
 func (genericTestHandlers[T]) Run(*StepContext) (any, error) { return nil, nil }
 
+type flowNameForTest string
+
+func TestFunctionNameOfATypeBuiltOnAString(t *testing.T) {
+	if got := functionName(flowNameForTest("Named")); got != "Named" {
+		t.Errorf("functionName() = %q", got)
+	}
+}
+
 func TestFunctionNameOfGenericFunctions(t *testing.T) {
 	if name := functionName(genericTestStep[int]); name != "genericTestStep" {
 		t.Errorf("generic function = %q", name)
