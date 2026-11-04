@@ -2,6 +2,7 @@ package gush
 
 import (
 	"bytes"
+	"encoding"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -16,33 +17,57 @@ var (
 	zstdEncoder, _ = zstd.NewWriter(nil)
 )
 
+// conversionMethods are the interfaces through which a type chooses its own JSON form.
+var conversionMethods = []reflect.Type{
+	reflect.TypeFor[json.Marshaler](),
+	reflect.TypeFor[json.Unmarshaler](),
+	reflect.TypeFor[encoding.TextMarshaler](),
+	reflect.TypeFor[encoding.TextUnmarshaler](),
+}
+
+// usedAsIs reports whether values of a type are their own encoding: strings and byte
+// slices, including types built on them, unless the type chooses its own JSON form.
+func usedAsIs(valueType reflect.Type) bool {
+	isBytes := valueType.Kind() == reflect.Slice && valueType.Elem() == reflect.TypeFor[byte]()
+	if valueType.Kind() != reflect.String && !isBytes {
+		return false
+	}
+
+	pointer := reflect.PointerTo(valueType)
+	for _, methods := range conversionMethods {
+		if pointer.Implements(methods) {
+			return false
+		}
+	}
+	return true
+}
+
 // Encode serializes a value the way flows and steps do for their input and output.
-// []byte and string are used as they are, including through a pointer, a nil value or
-// nil pointer encodes to nil, and everything else becomes JSON without HTML escaping.
-//
-// A string type of your own is not a string here, so it becomes JSON with its quotes. Read
-// a value back as the type it was written.
+// Strings and byte slices are used as they are, including through a pointer and including
+// types built on them, unless the type has its own JSON or text methods. A nil value or nil
+// pointer encodes to nil, and everything else becomes JSON without HTML escaping.
 func Encode(value any) ([]byte, error) {
 	if value == nil {
 		return nil, nil
 	}
 
 	reflected := reflect.ValueOf(value)
-	if reflected.Kind() == reflect.Pointer && reflected.IsNil() {
-		return nil, nil
+	if reflected.Kind() == reflect.Pointer {
+		if reflected.IsNil() {
+			return nil, nil
+		}
+		typed, ok := value.(*any)
+		if ok {
+			return Encode(*typed)
+		}
+		reflected = reflected.Elem()
 	}
 
-	switch typed := value.(type) {
-	case []byte:
-		return typed, nil
-	case *[]byte:
-		return *typed, nil
-	case string:
-		return []byte(typed), nil
-	case *string:
-		return []byte(*typed), nil
-	case *any:
-		return Encode(*typed)
+	if usedAsIs(reflected.Type()) {
+		if reflected.Kind() == reflect.String {
+			return []byte(reflected.String()), nil
+		}
+		return reflected.Bytes(), nil
 	}
 
 	buffer := &bytes.Buffer{}
@@ -55,27 +80,30 @@ func Encode(value any) ([]byte, error) {
 	return bytes.TrimSuffix(buffer.Bytes(), []byte("\n")), nil
 }
 
-// Decode deserializes data produced by Encode into target. *string and *[]byte receive
-// the bytes as they are, empty data zeroes target, and everything else is decoded as JSON.
-// *any receives what the JSON holds, or a string when the data is not JSON.
+// Decode deserializes data produced by Encode into target. A pointer to anything Encode uses
+// as it is receives the bytes as they are, empty data zeroes target, and everything else is
+// decoded as JSON. *any receives what the JSON holds, or a string when the data is not JSON.
 func Decode(data []byte, target any) error {
 	if len(data) == 0 {
 		setToZeroValue(target)
 		return nil
 	}
 
-	switch typed := target.(type) {
-	case *string:
+	typed, ok := target.(*any)
+	if ok && !json.Valid(data) {
 		*typed = string(data)
 		return nil
-	case *[]byte:
-		*typed = bytes.Clone(data)
-		return nil
-	case *any:
-		if !json.Valid(data) {
-			*typed = string(data)
+	}
+
+	reflected := reflect.ValueOf(target)
+	if reflected.Kind() == reflect.Pointer && !reflected.IsNil() && usedAsIs(reflected.Type().Elem()) {
+		element := reflected.Elem()
+		if element.Kind() == reflect.String {
+			element.SetString(string(data))
 			return nil
 		}
+		element.SetBytes(bytes.Clone(data))
+		return nil
 	}
 	return json.Unmarshal(data, target)
 }
