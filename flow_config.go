@@ -13,7 +13,7 @@ import (
 // be queued and applied later with WithConfig. A field left out of the JSON keeps its
 // default, while a zero written out is taken as it is, so "maximum_attempts": 0 still
 // means unlimited. Waiting is not part of a config: whoever applies it chooses RunFlow or
-// StartFlow.
+// StartFlow, and one with a Cron needs StartFlow.
 //
 // Like time.Time, it decodes itself from JSON, so a struct that embeds it would decode
 // through that method and lose its own fields. Hold it in a named field to decode it.
@@ -131,6 +131,10 @@ func WithTimeout(timeout time.Duration) FlowOption {
 
 // WithCron runs the flow on a schedule in UTC, such as "0 2 * * *" for daily at 2 AM. Start
 // it with StartFlow, because RunFlow returns an error: a schedule has no result to wait for.
+//
+// A client's StartFlow returns an error for an invalid expression. On a child flow, Temporal
+// instead fails the parent's workflow task, which retries until the parent's WithTimeout, so
+// check an expression that comes from outside first.
 func WithCron(cron string) FlowOption {
 	apply := func(config *FlowConfig) {
 		config.Cron = cron

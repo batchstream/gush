@@ -39,7 +39,7 @@ const DefaultFlowVersion = int(workflow.DefaultVersion)
 //	    return receipt, err
 //	}
 type FlowContext struct {
-	// Context is the Temporal workflow context that RunStep, RunFlow and StartFlow run on.
+	// Context is the Temporal workflow context that RunStep and RunFlow run on.
 	Context workflow.Context
 
 	FlowInfo
@@ -83,9 +83,10 @@ func NewFlowContext(ctx workflow.Context, logAttributes map[string]any) *FlowCon
 }
 
 // WithContext returns a copy of this FlowContext that runs its steps and child flows on ctx.
-// RunStep, RunFlow and StartFlow always use the FlowContext's own workflow.Context, so code
-// holding a different one needs this, such as a goroutine started with workflow.Go or
-// cleanup on a workflow.NewDisconnectedContext.
+// RunStep and RunFlow always use the FlowContext's own workflow.Context, so code holding a
+// different one needs this, such as a goroutine started with workflow.Go or cleanup on a
+// workflow.NewDisconnectedContext. StartFlow only checks that context for cancellation,
+// because its child is independent.
 //
 //	workflow.Go(ctx.Context, func(g workflow.Context) {
 //	    err := ctx.WithContext(g).RunStep(Process, item, nil)
@@ -163,8 +164,8 @@ func (flowCtx *FlowContext) RunFlow(request FlowRequest, options ...FlowOption) 
 // StartFlow starts a child flow and returns its ID once it has started, without waiting for
 // it to finish. The child is independent: it keeps running when this flow ends or is
 // canceled, and CancelFlow stops it by that ID. It inherits this flow's priority, fair key
-// and log attributes unless options override them. Like RunFlow, it returns a canceled error
-// once its own context is canceled.
+// and log attributes unless options override them. It returns a canceled error if its own
+// context is already canceled.
 func (flowCtx *FlowContext) StartFlow(request FlowRequest, options ...FlowOption) (string, error) {
 	err := flowCtx.Context.Err()
 	if err != nil {
