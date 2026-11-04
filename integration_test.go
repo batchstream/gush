@@ -21,6 +21,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	logcollector "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	"go.temporal.io/api/enums/v1"
+	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
@@ -81,7 +83,8 @@ func runWithTemporal(m *testing.M) int {
 
 	serveContext, stopServing := context.WithCancel(context.Background())
 	testWorker := gush.NewWorker(testQueue).
-		WithFlows(Double, FailingFlow, ParentOfFailingFlow, FailingStepFlow, PlainFailureFlow, AbortFlow, ApprovalFlow,
+		WithFlows(CancelableApprovalFlow, InvalidStepAttemptsFlow, InvalidChildAttemptsFlow, InvalidStartAttemptsFlow,
+			HighInitialIntervalFlow, Double, FailingFlow, ParentOfFailingFlow, FailingStepFlow, PlainFailureFlow, AbortFlow, ApprovalFlow,
 			ExpiringApprovalFlow, TimeoutFlow, HeartbeatFlow, SilentFlow, ReplayFlow, AttributesFlow, AttributesChildFlow,
 			WaitingFlow, InheritanceFlow, VersionFlow, SmallFlow, BadStepFlow, ChildOnOwnQueueFlow, WrappedAbortFlow,
 			WrappingFlow, ParallelFlow, CleanupFlow, CountdownFlow, AttributeEchoFlow, CancelOneStepFlow, ChargeThenRefundFlow,
@@ -690,6 +693,34 @@ func TestVersionStopsAnExecutionBelowTheMinimum(t *testing.T) {
 	flow, err := testClient.GetFlow(ctx, flowID)
 	require.NoError(t, err)
 	assert.Equal(t, "Running", flow.Status)
+	assert.True(t, flowTaskFailed(t, flowID, "TMPRL1100"), "the flow is not stopped by its version")
+}
+
+// dialTemporal returns the SDK's own client, for what gush does not expose.
+func dialTemporal(t *testing.T) client.Client {
+	t.Helper()
+	options := client.Options{HostPort: testHostPort}
+	temporalClient, err := client.Dial(options)
+	require.NoError(t, err)
+	t.Cleanup(temporalClient.Close)
+	return temporalClient
+}
+
+// flowTaskFailed reports whether a flow's history has a failed flow task with this text.
+func flowTaskFailed(t *testing.T, flowID, text string) bool {
+	t.Helper()
+	temporalClient := dialTemporal(t)
+
+	events := temporalClient.GetWorkflowHistory(testContext(t), flowID, "", false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+	for events.HasNext() {
+		event, err := events.Next()
+		require.NoError(t, err)
+		failed := event.GetWorkflowTaskFailedEventAttributes()
+		if failed != nil && strings.Contains(failed.GetFailure().GetMessage(), text) {
+			return true
+		}
+	}
+	return false
 }
 
 func SmallFlow(*gush.FlowContext) (any, error) {
@@ -1610,4 +1641,168 @@ func TestResumeKeepsAWrappedErrorsType(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, gush.IsPermanentError(err))
 	assert.Equal(t, "[Rejected] reviewer said no: rejected by reviewer", err.Error())
+}
+
+func CancelableApprovalFlow(ctx *gush.FlowContext) (any, error) {
+	var decision string
+	err := ctx.RunStep(ApprovalStep, string(ctx.Input), &decision,
+		gush.WithAttemptTimeout(30*time.Second),
+		gush.WithMaxAttempts(1),
+		gush.WithWaitForCancel(),
+	)
+	return decision, err
+}
+
+func TestResumeWithACanceledErrorEndsAStepNotBeingCanceled(t *testing.T) {
+	tests := map[string]error{
+		"context canceled": context.Canceled,
+		"wrapped":          fmt.Errorf("review: %w", context.Canceled),
+		"temporal":         temporal.NewCanceledError(),
+	}
+
+	for name, canceled := range tests {
+		t.Run(name, func(t *testing.T) {
+			ctx := testContext(t)
+			key := uniqueKey(t)
+			result := make(chan error, 1)
+			go func() { result <- testClient.RunFlow(ctx, flowRequest(RetriableApprovalFlow, key, nil)) }()
+			token := <-resumeTokens
+
+			err := testClient.Resume(ctx, token, nil, canceled)
+
+			require.NoError(t, err)
+			err = <-result
+			require.Error(t, err)
+			assert.True(t, gush.IsPermanentError(err), "%v", err)
+			assert.EqualValues(t, 1, attemptsOf(key).Load())
+		})
+	}
+}
+
+func TestResumeWithACanceledErrorCancelsAStepBeingCanceled(t *testing.T) {
+	ctx := testContext(t)
+	key := uniqueKey(t)
+	flowID := key + "-flow"
+	_, err := testClient.StartFlow(ctx, flowRequest(CancelableApprovalFlow, key, nil), gush.WithID(flowID))
+	require.NoError(t, err)
+	token := <-resumeTokens
+	require.NoError(t, testClient.CancelFlow(ctx, flowID))
+	temporalClient := dialTemporal(t)
+	require.Eventually(t, func() bool {
+		description, err := temporalClient.DescribeWorkflowExecution(ctx, flowID, "")
+		if err != nil {
+			return false
+		}
+		for _, step := range description.GetPendingActivities() {
+			if step.GetState() == enums.PENDING_ACTIVITY_STATE_CANCEL_REQUESTED {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 10*time.Millisecond)
+
+	err = testClient.Resume(ctx, token, nil, context.Canceled)
+
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		flow, err := testClient.GetFlow(ctx, flowID)
+		return err == nil && flow.Status == "Canceled"
+	}, 10*time.Second, 50*time.Millisecond)
+}
+
+func TestResumeWithAnApplicationErrorCausedByACancellation(t *testing.T) {
+	permanent := gush.NewPermanentError("rejected", "Rejected", context.Canceled)
+	tests := map[string]struct {
+		err     error
+		message string
+	}{
+		"permanent": {permanent, "[Rejected] rejected"},
+		"wrapped":   {fmt.Errorf("review: %w", permanent), "[Rejected] review: rejected"},
+		"aborted":   {gush.AsStepContext(context.Background()).Abort(context.Canceled), "[StepAborted] context canceled"},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			ctx := testContext(t)
+			key := uniqueKey(t)
+			result := make(chan error, 1)
+			go func() { result <- testClient.RunFlow(ctx, flowRequest(RetriableApprovalFlow, key, nil)) }()
+			token := <-resumeTokens
+
+			err := testClient.Resume(ctx, token, nil, test.err)
+
+			require.NoError(t, err)
+			err = <-result
+			assert.True(t, gush.IsPermanentError(err), "%v", err)
+			assert.Equal(t, test.message, err.Error())
+			assert.EqualValues(t, 1, attemptsOf(key).Load())
+		})
+	}
+
+	t.Run("retryable", func(t *testing.T) {
+		ctx := testContext(t)
+		key := uniqueKey(t)
+		result := make(chan error, 1)
+		go func() { result <- testClient.RunFlow(ctx, flowRequest(RetriableApprovalFlow, key, nil)) }()
+		token := <-resumeTokens
+		options := temporal.ApplicationErrorOptions{Cause: context.Canceled}
+		retry := temporal.NewApplicationErrorWithOptions("retry", "Retry", options)
+
+		err := testClient.Resume(ctx, token, nil, retry)
+
+		require.NoError(t, err)
+		token = <-resumeTokens
+		require.NoError(t, testClient.Resume(ctx, token, "approved", nil))
+		require.NoError(t, <-result)
+		assert.EqualValues(t, 2, attemptsOf(key).Load())
+	})
+}
+
+func InvalidStepAttemptsFlow(ctx *gush.FlowContext) (any, error) {
+	input := order{}
+	return nil, ctx.RunStep(DoubleStep, input, nil, gush.WithMaxAttempts(-2))
+}
+
+func InvalidChildAttemptsFlow(ctx *gush.FlowContext) (any, error) {
+	request := gush.FlowRequest{Flow: SmallFlow}
+	return nil, ctx.RunFlow(request, gush.WithMaxAttempts(-2))
+}
+
+func InvalidStartAttemptsFlow(ctx *gush.FlowContext) (any, error) {
+	request := gush.FlowRequest{Flow: SmallFlow}
+	_, err := ctx.StartFlow(request, gush.WithMaxAttempts(-2))
+	return nil, err
+}
+
+func TestNegativeAttemptsOtherThanUnlimitedAreAnError(t *testing.T) {
+	ctx := testContext(t)
+
+	err := testClient.RunFlow(ctx, flowRequest(SmallFlow, nil, nil), gush.WithMaxAttempts(-2))
+	assert.ErrorContains(t, err, "max attempts -2")
+	_, err = testClient.StartFlow(ctx, flowRequest(SmallFlow, nil, nil), gush.WithMaxAttempts(-2))
+	assert.ErrorContains(t, err, "max attempts -2")
+
+	flows := []any{InvalidStepAttemptsFlow, InvalidChildAttemptsFlow, InvalidStartAttemptsFlow}
+	for _, flow := range flows {
+		request := flowRequest(flow, nil, nil)
+		err = testClient.RunFlow(ctx, request)
+		assert.True(t, gush.IsPermanentError(err), "%v", err)
+		assert.ErrorContains(t, err, "max attempts -2")
+	}
+}
+
+func HighInitialIntervalFlow(ctx *gush.FlowContext) (any, error) {
+	var output order
+	input := order{ID: "high-interval", Amount: 21}
+	err := ctx.RunStep(DoubleStep, input, &output, gush.WithInitialInterval(200*time.Second))
+	return output, err
+}
+
+func TestStepInitialIntervalAboveTheDefaultCapRuns(t *testing.T) {
+	var output order
+
+	err := testClient.RunFlow(testContext(t), flowRequest(HighInitialIntervalFlow, nil, &output))
+
+	require.NoError(t, err)
+	assert.Equal(t, 42, output.Amount)
 }
