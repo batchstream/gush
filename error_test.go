@@ -239,3 +239,32 @@ func TestWrappedErrorKeepsItsDetailsOnTheCause(t *testing.T) {
 		t.Errorf("detail = %q, error = %v", detail, err)
 	}
 }
+
+func TestAbortKeepsTheMessageReadable(t *testing.T) {
+	declined := NewApplicationError("declined", "Declined")
+	tests := map[string]struct {
+		cause    error
+		expected string
+	}{
+		"plain error":                 {cause: errors.New("bad input"), expected: "bad input"},
+		"application error":           {cause: declined, expected: "declined"},
+		"wrapped application error":   {cause: fmt.Errorf("charge: %w", declined), expected: "charge: declined"},
+		"error returned from RunStep": {cause: unwrapError(declined), expected: "[Declined] declined"},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			causes := []error{test.cause}
+			aborted := abortError("StepAborted", causes)
+			if aborted.Message() != test.expected {
+				t.Errorf("message = %q, want %q", aborted.Message(), test.expected)
+			}
+			if !aborted.NonRetryable() {
+				t.Errorf("an abort must not be retried")
+			}
+			if !errors.Is(aborted, test.cause) {
+				t.Errorf("the cause is not reachable from %v", aborted)
+			}
+		})
+	}
+}

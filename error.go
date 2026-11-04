@@ -135,5 +135,10 @@ func abortError(errType string, cause []error) *ApplicationError {
 	if len(cause) == 0 || cause[0] == nil {
 		return NewPermanentError("unknown error", errType, nil)
 	}
-	return NewPermanentError(cause[0].Error(), errType, cause[0])
+	message := cause[0].Error()
+	var appErr *ApplicationError
+	if errors.As(cause[0], &appErr) {
+		message = strings.Replace(message, appErr.Error(), appErr.Message(), 1)
+	}
+	return NewPermanentError(message, errType, cause[0])
 }
