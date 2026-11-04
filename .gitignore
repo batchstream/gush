@@ -1,0 +1,4 @@
+/coverage.out
+/.temporal.db*
+go.work
+go.work.sum
