@@ -189,7 +189,7 @@ err := ctx.RunStep(Charge, order, &receipt, gush.WithNoRetry("Declined"))
 
 `WithNoRetry` matches the type of a `gush.NewApplicationError`. Pass `gush.StepTimeoutErrorType` to stop retrying steps that timed out.
 
-Errors from `RunFlow` and `RunStep` work with `errors.As`, `gush.IsApplicationError`, `gush.IsPermanentError` and `gush.IsPanicError`. Wrapping one with `fmt.Errorf` and `%w` keeps its type and retryability.
+Errors from `RunFlow` and `RunStep` work with `errors.As`, `gush.IsApplicationError`, `gush.IsPermanentError` and `gush.IsPanicError`. Wrapping one with `fmt.Errorf` and `%w` keeps its type and retryability. Its details stay on the original error, so when a step wrapped it, `errors.As` finds an outer error without them, and `errors.Unwrap` on that one reaches them.
 
 ## Priority and fairness
 

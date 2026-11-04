@@ -85,9 +85,9 @@ func runWithTemporal(m *testing.M) int {
 			ExpiringApprovalFlow, TimeoutFlow, HeartbeatFlow, SilentFlow, ReplayFlow, AttributesFlow, AttributesChildFlow,
 			WaitingFlow, InheritanceFlow, VersionFlow, SmallFlow, BadStepFlow, ChildOnOwnQueueFlow, WrappedAbortFlow,
 			WrappingFlow, ParallelFlow, CleanupFlow, CountdownFlow, AttributeEchoFlow, CancelOneStepFlow, ChargeThenRefundFlow,
-			DetachingParentFlow, CronChildFlow).
+			DetachingParentFlow, CronChildFlow, DetailReadingFlow).
 		WithSteps(DoubleStep, FailingStep, PlainFailureStep, AbortStep, ApprovalStep, SlowStep, HeartbeatStep, SilentStep,
-			PurgeCacheStep, AttributesStep, InheritanceStep, WrappedAbortStep, DecliningStep, CleanupStep, AttributeEchoStep, ChargingStep, RefundStep).
+			PurgeCacheStep, AttributesStep, InheritanceStep, WrappedAbortStep, DecliningStep, CleanupStep, AttributeEchoStep, ChargingStep, RefundStep, DetailedStep).
 		WithContext(serveContext)
 
 	served := make(chan error, 1)
@@ -1041,6 +1041,41 @@ func TestStartFlowReturnsAGeneratedID(t *testing.T) {
 func DetachingParentFlow(ctx *gush.FlowContext) (any, error) {
 	request := gush.FlowRequest{Flow: WaitingFlow}
 	return ctx.StartFlow(request)
+}
+
+func DetailedStep(ctx *gush.StepContext) (any, error) {
+	permanent := gush.NewPermanentError("declined", "Declined", nil, "the-detail")
+	return nil, fmt.Errorf("charge: %w", permanent)
+}
+
+func DetailReadingFlow(ctx *gush.FlowContext) (any, error) {
+	stepErr := ctx.RunStep(DetailedStep, nil, nil)
+
+	var outer *gush.ApplicationError
+	if !errors.As(stepErr, &outer) {
+		return nil, fmt.Errorf("the step returned %v", stepErr)
+	}
+	var detail string
+	err := outer.Details(&detail)
+	if err == nil {
+		return nil, fmt.Errorf("the outer error has the detail %q", detail)
+	}
+
+	var original *gush.ApplicationError
+	if !errors.As(errors.Unwrap(outer), &original) {
+		return nil, fmt.Errorf("the outer error wraps %v", errors.Unwrap(outer))
+	}
+	err = original.Details(&detail)
+	return detail, err
+}
+
+func TestWrappedErrorKeepsItsDetailsOnTheOriginal(t *testing.T) {
+	ctx := testContext(t)
+
+	var detail string
+	err := testClient.RunFlow(ctx, flowRequest(DetailReadingFlow, nil, &detail))
+	require.NoError(t, err)
+	assert.Equal(t, "the-detail", detail)
 }
 
 func TestChildBegunWithStartFlowOutlivesItsParent(t *testing.T) {
