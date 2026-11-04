@@ -97,7 +97,7 @@ err = client.CancelFlow(ctx, flowID)     // lets the flow clean up
 err = client.TerminateFlow(ctx, flowID, "reason") // stops it immediately
 ```
 
-A flow starts a child the same way. A child with no queue runs on its parent's, and one begun with `StartFlow` outlives its parent.
+A flow starts a child the same way. A child with no queue runs on its parent's. One begun with `StartFlow` is independent: it keeps running when its parent ends or is canceled, and `CancelFlow` stops it by the returned ID.
 
 ```go
 request := gush.FlowRequest{Flow: Notify, Input: receipt}
@@ -112,7 +112,7 @@ Flows and steps are registered under their bare Go function names, and can be ca
 
 ### Parallel steps and cleanup
 
-`RunStep` and `RunFlow` run on the context their `FlowContext` holds. Code on another `workflow.Context` gets a matching `FlowContext` from `WithContext`, as a goroutine does:
+`RunStep`, `RunFlow` and `StartFlow` run on the context their `FlowContext` holds. Code on another `workflow.Context` gets a matching `FlowContext` from `WithContext`, as a goroutine does:
 
 ```go
 group := workflow.NewWaitGroup(ctx.Context)
@@ -156,10 +156,10 @@ A step that is already running only finds out about the cancellation through `ct
 | `WithFairKey(key)` | both | Group to schedule fairly against, such as a tenant. |
 | `WithLogAttribute(k, v)` | both | Attribute on every log line of this run and its children. |
 | `WithLogAttributes(m)` | both | The same, for several attributes. |
-| `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's input, and a child flow gets an error. |
+| `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's input, and a child flow gets an error. `RunFlow` then waits for that flow, even across a `WithCron` schedule. |
 | `WithTimeout(d)` | flow | Limit on the whole execution, including every retry and every scheduled run. |
 | `WithCron(expr)` | flow | Schedule in UTC. Use with `StartFlow`. |
-| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Fields left out of the JSON keep their defaults. |
+| `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Fields left out of the JSON keep their defaults. Whoever applies it chooses `RunFlow` or `StartFlow`. |
 | `WithQueue(q)` | step | Runs on another queue. |
 | `WithAttemptTimeout(d)` | step | Limit on each attempt, not the step as a whole. |
 | `WithHeartbeatTimeout(d)` | step | Fails an attempt that stops calling `ctx.Heartbeat()`. |
@@ -189,7 +189,7 @@ err := ctx.RunStep(Charge, order, &receipt, gush.WithNoRetry("Declined"))
 
 `WithNoRetry` matches the type of a `gush.NewApplicationError`. Pass `gush.StepTimeoutErrorType` to stop retrying steps that timed out.
 
-Errors from `RunFlow` and `RunStep` work with `errors.As`, `gush.IsApplicationError`, `gush.IsPermanentError` and `gush.IsPanicError`. Wrapping one with `fmt.Errorf` and `%w` keeps its type and retryability. Its details stay on the original error, so when a step wrapped it, `errors.As` finds an outer error without them, and `errors.Unwrap` on that one reaches them.
+Errors from `RunFlow` and `RunStep` work with `errors.As`, `gush.IsApplicationError`, `gush.IsPermanentError` and `gush.IsPanicError`. Wrapping one with `fmt.Errorf` and `%w` keeps its type and retryability. Its details stay on the original error, so `errors.As` can find an outer error without them. Call `errors.Unwrap` on that one until `Details` succeeds, once for each time the error was wrapped.
 
 ## Priority and fairness
 

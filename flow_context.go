@@ -39,7 +39,7 @@ const DefaultFlowVersion = int(workflow.DefaultVersion)
 //	    return receipt, err
 //	}
 type FlowContext struct {
-	// Context is the Temporal workflow context that RunStep and RunFlow run on.
+	// Context is the Temporal workflow context that RunStep, RunFlow and StartFlow run on.
 	Context workflow.Context
 
 	FlowInfo
@@ -83,9 +83,9 @@ func NewFlowContext(ctx workflow.Context, logAttributes map[string]any) *FlowCon
 }
 
 // WithContext returns a copy of this FlowContext that runs its steps and child flows on ctx.
-// RunStep and RunFlow always use the FlowContext's own workflow.Context, so code holding a
-// different one needs this, such as a goroutine started with workflow.Go or cleanup on a
-// workflow.NewDisconnectedContext.
+// RunStep, RunFlow and StartFlow always use the FlowContext's own workflow.Context, so code
+// holding a different one needs this, such as a goroutine started with workflow.Go or
+// cleanup on a workflow.NewDisconnectedContext.
 //
 //	workflow.Go(ctx.Context, func(g workflow.Context) {
 //	    err := ctx.WithContext(g).RunStep(Process, item, nil)

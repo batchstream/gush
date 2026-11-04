@@ -12,14 +12,15 @@ import (
 // FlowConfig holds the settings of one flow run. Its JSON form is stable, so a config can
 // be queued and applied later with WithConfig. A field left out of the JSON keeps its
 // default, while a zero written out is taken as it is, so "maximum_attempts": 0 still
-// means unlimited.
+// means unlimited. Waiting is not part of a config: whoever applies it chooses RunFlow or
+// StartFlow.
 //
 // Like time.Time, it decodes itself from JSON, so a struct that embeds it would decode
 // through that method and lose its own fields. Hold it in a named field to decode it.
 type FlowConfig struct {
 	CommonConfig
 
-	// ID is the flow ID. If empty, the server generates one.
+	// ID is the flow ID. If empty, one is generated.
 	ID string `json:"id"`
 
 	// Timeout limits the whole execution, including every retry and every scheduled run.
@@ -110,7 +111,8 @@ func WithConfig(config *FlowConfig) FlowOption {
 
 // WithID sets the flow ID. Without it one is generated, which StartFlow returns. While a
 // flow with this ID is running, a client's RunFlow or StartFlow joins it instead of starting
-// another and ignores this run's input, and a child flow gets an error.
+// another and ignores this run's input, and a child flow gets an error. RunFlow then waits
+// for that flow, even across a WithCron schedule.
 func WithID(flowID string) FlowOption {
 	apply := func(config *FlowConfig) {
 		config.ID = flowID
