@@ -1,0 +1,41 @@
+name: Bug report
+description: Report incorrect behavior with a reproducible example.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For security vulnerabilities, use [private reporting](https://github.com/batchstream/gush/security/advisories/new).
+        Remove credentials, private endpoints and payload data from logs and configuration.
+  - type: input
+    id: version
+    attributes:
+      label: Gush version
+      description: Module version from `go.mod`, or commit SHA.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Go version and Temporal server version, self-hosted or Temporal Cloud.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the smallest flow, step or test case that reproduces the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Logs and configuration
+      description: Relevant, redacted diagnostics, such as the flow's event history.
+      render: text
