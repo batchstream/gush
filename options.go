@@ -17,7 +17,7 @@ type CommonConfig struct {
 	FairKey string `json:"fair_key"`
 
 	// LogAttributes are attached to every log record and inherited by child flows and steps.
-	LogAttributes LogAttributes `json:"log_attributes"`
+	LogAttributes LogAttributeMap `json:"log_attributes"`
 }
 
 // FlowOption customizes a flow run.
