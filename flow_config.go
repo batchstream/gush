@@ -63,8 +63,9 @@ func (option flowOption) applyFlow(config *FlowConfig) {
 
 // WithConfig replaces the settings accumulated so far with a copy of config, so options
 // after it refine config. An empty Priority or FairKey keeps the current one, and
-// LogAttributes merge over the current ones, so a child flow keeps what it inherits. A nil
-// config changes nothing.
+// LogAttributes merge over the current ones, so a child flow keeps what it inherits.
+// ErrorIfRunning stays on once set, because a config cannot switch off that safety check. A
+// nil config changes nothing.
 func WithConfig(config *FlowConfig) FlowOption {
 	apply := func(target *FlowConfig) {
 		if config == nil {
@@ -73,6 +74,7 @@ func WithConfig(config *FlowConfig) FlowOption {
 		current := *target
 
 		*target = *config
+		target.ErrorIfRunning = config.ErrorIfRunning || current.ErrorIfRunning
 		target.NoRetry = slices.Clone(config.NoRetry)
 		if target.Priority == "" {
 			target.Priority = current.Priority
