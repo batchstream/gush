@@ -205,6 +205,16 @@ func TestTotalBackoff(t *testing.T) {
 			policy:   RetryPolicy{InitialInterval: time.Second, BackoffCoefficient: 1, MaxInterval: time.Second, MaxAttempts: 1 << 30},
 			expected: time.Duration(1<<30-1) * time.Second,
 		},
+		{
+			name:     "a cap reached exactly",
+			policy:   RetryPolicy{InitialInterval: time.Second, BackoffCoefficient: 2, MaxInterval: 64 * time.Second, MaxAttempts: 10},
+			expected: (1 + 2 + 4 + 8 + 16 + 32 + 64 + 64 + 64) * time.Second,
+		},
+		{
+			name:     "the default cap",
+			policy:   RetryPolicy{MaxAttempts: 10},
+			expected: (1 + 2 + 4 + 8 + 16 + 32 + 64 + 100 + 100) * time.Second,
+		},
 	}
 
 	for _, tt := range tests {
@@ -226,5 +236,28 @@ func TestWithWaitForCancelReachesTemporal(t *testing.T) {
 
 	if !newActivityOptions(config).WaitForCancellation {
 		t.Error("WithWaitForCancel did not reach the activity options")
+	}
+}
+
+// Delays too small to grow once truncated, or a coefficient barely above one, used to run a loop
+// for every retry inside the flow and trip the deadlock detector.
+func TestTotalBackoffIsQuickForAnyPolicy(t *testing.T) {
+	policies := map[string]RetryPolicy{
+		"nanosecond delays": {InitialInterval: time.Nanosecond, BackoffCoefficient: 1.1, MaxAttempts: math.MaxInt32},
+		"slow growth":       {InitialInterval: time.Second, BackoffCoefficient: 1.0000001, MaxAttempts: math.MaxInt32},
+	}
+	for name, policy := range policies {
+		t.Run(name, func(t *testing.T) {
+			start := time.Now()
+			got := policy.totalBackoff()
+			if elapsed := time.Since(start); elapsed > 10*time.Millisecond {
+				t.Errorf("totalBackoff took %v", elapsed)
+			}
+
+			_, maxInterval := policy.intervals()
+			if lower := scaleDuration(policy.MaxAttempts/2, maxInterval); got < lower {
+				t.Errorf("totalBackoff() = %v, want at least %v", got, lower)
+			}
+		})
 	}
 }
