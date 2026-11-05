@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/temporal"
 )
 
@@ -46,6 +47,33 @@ func IsPermanentError(err error) bool {
 // after it crosses the step.
 func IsFlowRunningError(err error) bool {
 	return temporal.IsWorkflowExecutionAlreadyStartedError(err)
+}
+
+// IsInvalidConfigError reports whether a request was refused as invalid, so sending it again
+// cannot succeed: Gush found settings Temporal refuses, including in a flow that has since
+// failed on them, or the server answered InvalidArgument. The server gives that answer for
+// more than settings, such as an input over its size limit. Past a flow it sees through Abort,
+// NewPermanentError and %w, but not errors.Join or several %w, and not a client's refusal inside
+// a step, whose text is all that crosses the step.
+func IsInvalidConfigError(err error) bool {
+	if errors.Is(err, errInvalidConfig) {
+		return true
+	}
+	var rejected *serviceerror.InvalidArgument
+	if errors.As(err, &rejected) {
+		return true
+	}
+
+	// A flow can wrap the failure in an error of its own before returning it, so look at every
+	// ApplicationError in the chain rather than the outermost.
+	var applicationError *ApplicationError
+	for errors.As(err, &applicationError) {
+		if applicationError.Type() == invalidConfigErrorType && applicationError.NonRetryable() {
+			return true
+		}
+		err = applicationError.Unwrap()
+	}
+	return false
 }
 
 // IsPanicError reports whether err is a PanicError.

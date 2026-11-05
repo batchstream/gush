@@ -1,6 +1,7 @@
 package gush
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 	"time"
@@ -17,7 +18,8 @@ type FlowConfig struct {
 	// ID is the flow ID. If empty, one is generated.
 	ID string `json:"id"`
 
-	// Timeout limits the whole execution, including every retry. Zero means unlimited.
+	// Timeout limits the whole execution, including every retry. Zero means unlimited, and a
+	// negative one is an error.
 	Timeout time.Duration `json:"timeout"`
 
 	// ErrorIfRunning makes a client's RunFlow or StartFlow fail rather than join a flow
@@ -38,6 +40,15 @@ func DefaultFlowConfig() *FlowConfig {
 	return config
 }
 
+// validate rejects settings Temporal cannot run. On a child flow they would leave the parent
+// Running with its tasks failing.
+func (config *FlowConfig) validate() error {
+	if config.Timeout < 0 {
+		return fmt.Errorf("%w: timeout %v must not be negative", errInvalidConfig, config.Timeout)
+	}
+	return config.RetryPolicy.validate(defaultFlowAttempts)
+}
+
 // Apply applies options to config in order.
 func (config *FlowConfig) Apply(options ...FlowOption) {
 	for _, option := range options {
@@ -53,8 +64,9 @@ func (option flowOption) applyFlow(config *FlowConfig) {
 
 // WithConfig replaces the settings accumulated so far with a copy of config, so options
 // after it refine config. An empty Priority or FairKey keeps the current one, and
-// LogAttributes merge over the current ones, so a child flow keeps what it inherits. A nil
-// config changes nothing.
+// LogAttributes merge over the current ones, so a child flow keeps what it inherits.
+// ErrorIfRunning stays on once set, because a config cannot switch off that safety check. A
+// nil config changes nothing.
 func WithConfig(config *FlowConfig) FlowOption {
 	apply := func(target *FlowConfig) {
 		if config == nil {
@@ -63,6 +75,7 @@ func WithConfig(config *FlowConfig) FlowOption {
 		current := *target
 
 		*target = *config
+		target.ErrorIfRunning = config.ErrorIfRunning || current.ErrorIfRunning
 		target.NoRetry = slices.Clone(config.NoRetry)
 		if target.Priority == "" {
 			target.Priority = current.Priority
@@ -99,7 +112,8 @@ func WithErrorIfRunning() FlowOption {
 	return flowOption(apply)
 }
 
-// WithTimeout limits the whole flow execution, including every retry.
+// WithTimeout limits the whole flow execution, including every retry. A negative timeout is an
+// error.
 func WithTimeout(timeout time.Duration) FlowOption {
 	apply := func(config *FlowConfig) {
 		config.Timeout = timeout

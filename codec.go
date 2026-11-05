@@ -28,22 +28,33 @@ var conversionMethods = []reflect.Type{
 // usedAsIs reports whether values of a type are their own encoding: strings and byte
 // slices, including types built on them, unless the type chooses its own JSON form.
 func usedAsIs(valueType reflect.Type) bool {
-	isBytes := valueType.Kind() == reflect.Slice && valueType.Elem() == reflect.TypeFor[byte]()
-	if valueType.Kind() != reflect.String && !isBytes {
+	if valueType.Kind() != reflect.String && !isByteSlice(valueType) {
 		return false
 	}
+	return !hasConversionMethods(valueType)
+}
 
+// isByteSlice reports whether a type is a slice of bytes. Elements with their own JSON or
+// text form make it a list instead, as they do for encoding/json.
+func isByteSlice(valueType reflect.Type) bool {
+	if valueType.Kind() != reflect.Slice || valueType.Elem().Kind() != reflect.Uint8 {
+		return false
+	}
+	return !hasConversionMethods(valueType.Elem())
+}
+
+func hasConversionMethods(valueType reflect.Type) bool {
 	pointer := reflect.PointerTo(valueType)
 	for _, methods := range conversionMethods {
 		if pointer.Implements(methods) {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // Encode serializes a value the way flows and steps do for their input and output.
-// Strings and byte slices are used as they are, including through a pointer and including
+// Strings and byte slices are used as they are, through any number of pointers and including
 // types built on them, unless the type has its own JSON or text methods. A nil value or nil
 // pointer encodes to nil, and everything else becomes JSON without HTML escaping.
 //
@@ -55,15 +66,14 @@ func Encode(value any) ([]byte, error) {
 	}
 
 	reflected := reflect.ValueOf(value)
-	if reflected.Kind() == reflect.Pointer {
+	for reflected.Kind() == reflect.Pointer {
 		if reflected.IsNil() {
 			return nil, nil
 		}
-		typed, ok := value.(*any)
-		if ok {
-			return Encode(*typed)
-		}
 		reflected = reflected.Elem()
+	}
+	if reflected.Kind() == reflect.Interface {
+		return Encode(reflected.Interface())
 	}
 
 	if usedAsIs(reflected.Type()) {
@@ -84,8 +94,9 @@ func Encode(value any) ([]byte, error) {
 }
 
 // Decode deserializes data produced by Encode into target. A pointer to anything Encode uses
-// as it is receives the bytes as they are, empty data zeroes target, and everything else is
-// decoded as JSON. *any receives what the JSON holds, or a string when the data is not JSON.
+// as it is, through any number of pointers, receives the bytes as they are, empty data zeroes
+// target, and everything else is decoded as JSON. *any receives what the JSON holds, or a
+// string when the data is not JSON.
 func Decode(data []byte, target any) error {
 	if len(data) == 0 {
 		setToZeroValue(target)
@@ -98,17 +109,42 @@ func Decode(data []byte, target any) error {
 		return nil
 	}
 
-	reflected := reflect.ValueOf(target)
-	if reflected.Kind() == reflect.Pointer && !reflected.IsNil() && usedAsIs(reflected.Type().Elem()) {
-		element := reflected.Elem()
-		if element.Kind() == reflect.String {
-			element.SetString(string(data))
-			return nil
-		}
-		element.SetBytes(bytes.Clone(data))
+	destination, ok := rawDestination(target)
+	if !ok {
+		return json.Unmarshal(data, target)
+	}
+	if destination.Kind() == reflect.String {
+		destination.SetString(string(data))
 		return nil
 	}
-	return json.Unmarshal(data, target)
+	destination.SetBytes(bytes.Clone(data))
+	return nil
+}
+
+// rawDestination finds what receives data as it is when target leads to a type Encode uses
+// as it is, allocating the pointers on the way, as encoding/json does for a nil pointer.
+func rawDestination(target any) (destination reflect.Value, ok bool) {
+	destination = reflect.ValueOf(target)
+	if destination.Kind() != reflect.Pointer || destination.IsNil() {
+		return destination, false
+	}
+
+	finalType := destination.Type().Elem()
+	for finalType.Kind() == reflect.Pointer {
+		finalType = finalType.Elem()
+	}
+	if !usedAsIs(finalType) {
+		return destination, false
+	}
+
+	destination = destination.Elem()
+	for destination.Kind() == reflect.Pointer {
+		if destination.IsNil() {
+			destination.Set(reflect.New(destination.Type().Elem()))
+		}
+		destination = destination.Elem()
+	}
+	return destination, true
 }
 
 // setToZeroValue zeroes the value target points to, leaving unexported struct fields alone.

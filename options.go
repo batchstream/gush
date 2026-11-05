@@ -17,7 +17,7 @@ type CommonConfig struct {
 	FairKey string `json:"fair_key"`
 
 	// LogAttributes are attached to every log record and inherited by child flows and steps.
-	LogAttributes LogAttributes `json:"log_attributes"`
+	LogAttributes LogAttributeMap `json:"log_attributes"`
 }
 
 // FlowOption customizes a flow run.
@@ -89,7 +89,8 @@ func WithMaxAttempts(attempts int32) Option {
 	return commonOption(apply)
 }
 
-// WithNoRetry adds ApplicationError types that fail immediately instead of retrying.
+// WithNoRetry adds ApplicationError types that fail immediately instead of retrying. See
+// RetryPolicy.NoRetry for entries that name a timeout, where an unknown name is an error.
 func WithNoRetry(errorTypes ...string) Option {
 	apply := func(config *CommonConfig) {
 		config.NoRetry = append(config.NoRetry, errorTypes...)

@@ -362,3 +362,25 @@ func TestJSONConfigDecodesOverExistingSettings(t *testing.T) {
 		t.Errorf("existing settings changed: %q, %d, %q", config.ID, config.MaxAttempts, config.Priority)
 	}
 }
+
+func TestWithConfigKeepsErrorIfRunningOnceSet(t *testing.T) {
+	config := gush.DefaultFlowConfig()
+	config.Apply(gush.WithErrorIfRunning(), gush.WithConfig(gush.DefaultFlowConfig()))
+	if !config.ErrorIfRunning {
+		t.Error("WithConfig switched off an earlier WithErrorIfRunning")
+	}
+
+	queued := gush.DefaultFlowConfig()
+	queued.ErrorIfRunning = true
+	config = gush.DefaultFlowConfig()
+	config.Apply(gush.WithConfig(queued))
+	if !config.ErrorIfRunning {
+		t.Error("WithConfig ignored ErrorIfRunning in the config")
+	}
+
+	config = gush.DefaultFlowConfig()
+	config.Apply(gush.WithConfig(gush.DefaultFlowConfig()))
+	if config.ErrorIfRunning {
+		t.Error("ErrorIfRunning turned on without being asked for")
+	}
+}
