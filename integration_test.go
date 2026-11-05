@@ -84,8 +84,8 @@ func runWithTemporal(m *testing.M) int {
 
 	serveContext, stopServing := context.WithCancel(context.Background())
 	testWorker := gush.NewWorker(testQueue).
-		WithFlows(InvalidStepTimeoutFlow, InvalidNoRetryFlow, InvalidChildTimeoutFlow, InvalidGrandchildFlow, PointerOutputFlow).
-		WithFlows(NegativePickupFlow, PickupInsteadOfAttemptFlow, OneAttemptNoRetryFlow, ChildNoRetryFlow, TooManyAttemptsFlow).
+		WithFlows(InvalidStepTimeoutFlow, InvalidNoRetryFlow, InvalidChildTimeoutFlow, InvalidGrandchildFlow, WrappedInvalidSettingsFlow, PointerOutputFlow).
+		WithFlows(NegativePickupFlow, PickupInsteadOfAttemptFlow, OneAttemptNoRetryFlow, ChildNoRetryFlow, TooManyAttemptsFlow, TooManyAttemptsOnlyPickupFlow).
 		WithFlows(CancelableApprovalFlow, InvalidStepAttemptsFlow, InvalidChildAttemptsFlow, InvalidStartAttemptsFlow,
 			HighInitialIntervalFlow, Double, FailingFlow, ParentOfFailingFlow, FailingStepFlow, PlainFailureFlow, AbortFlow, ApprovalFlow,
 			ExpiringApprovalFlow, TimeoutFlow, HeartbeatFlow, SilentFlow, ReplayFlow, AttributesFlow, AttributesChildFlow,
@@ -1807,6 +1807,11 @@ func InvalidChildTimeoutFlow(ctx *gush.FlowContext) (any, error) {
 	return nil, ctx.RunFlow(request, gush.WithTimeout(-time.Second))
 }
 
+func WrappedInvalidSettingsFlow(ctx *gush.FlowContext) (any, error) {
+	err := ctx.RunStep(DoubleStep, order{ID: "wrapped", Amount: 1}, nil, gush.WithHeartbeatTimeout(-time.Second))
+	return nil, ctx.Abort(err)
+}
+
 func InvalidGrandchildFlow(ctx *gush.FlowContext) (any, error) {
 	request := gush.FlowRequest{Flow: InvalidStepTimeoutFlow}
 	return nil, ctx.RunFlow(request)
@@ -1816,7 +1821,7 @@ func InvalidGrandchildFlow(ctx *gush.FlowContext) (any, error) {
 func TestSettingsTemporalRefusesFailTheFlow(t *testing.T) {
 	ctx := testContext(t)
 
-	flows := []any{InvalidStepTimeoutFlow, InvalidNoRetryFlow, InvalidChildTimeoutFlow, InvalidGrandchildFlow}
+	flows := []any{InvalidStepTimeoutFlow, InvalidNoRetryFlow, InvalidChildTimeoutFlow, InvalidGrandchildFlow, WrappedInvalidSettingsFlow}
 	for _, flow := range flows {
 		request := flowRequest(flow, nil, nil)
 		err := testClient.RunFlow(ctx, request)
@@ -1848,6 +1853,10 @@ func ChildNoRetryFlow(ctx *gush.FlowContext) (any, error) {
 	return nil, ctx.RunFlow(request, gush.WithNoRetry("TemporalTimeout:Soon"))
 }
 
+func TooManyAttemptsOnlyPickupFlow(ctx *gush.FlowContext) (any, error) {
+	return nil, ctx.RunStep(DoubleStep, order{ID: "too-many-pickup", Amount: 1}, nil, gush.WithAttemptTimeout(0), gush.WithMaxAttempts(math.MaxInt32), gush.WithPickupTimeout(30*time.Minute))
+}
+
 func TooManyAttemptsFlow(ctx *gush.FlowContext) (any, error) {
 	return nil, ctx.RunStep(DoubleStep, order{ID: "too-many", Amount: 1}, nil, gush.WithMaxAttempts(math.MaxInt32), gush.WithPickupTimeout(time.Minute))
 }
@@ -1857,7 +1866,7 @@ func TooManyAttemptsFlow(ctx *gush.FlowContext) (any, error) {
 func TestSettingsTemporalAcceptsKeepRunning(t *testing.T) {
 	ctx := testContext(t)
 
-	flows := []any{NegativePickupFlow, PickupInsteadOfAttemptFlow, OneAttemptNoRetryFlow, ChildNoRetryFlow, TooManyAttemptsFlow}
+	flows := []any{NegativePickupFlow, PickupInsteadOfAttemptFlow, OneAttemptNoRetryFlow, ChildNoRetryFlow, TooManyAttemptsFlow, TooManyAttemptsOnlyPickupFlow}
 	for _, flow := range flows {
 		request := flowRequest(flow, nil, nil)
 		err := testClient.RunFlow(ctx, request)

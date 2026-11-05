@@ -61,8 +61,17 @@ func IsInvalidConfigError(err error) bool {
 	if errors.As(err, &rejected) {
 		return true
 	}
+
+	// A flow can wrap the failure in an error of its own before returning it, so look at every
+	// ApplicationError in the chain rather than the outermost.
 	var applicationError *ApplicationError
-	return errors.As(err, &applicationError) && applicationError.Type() == invalidConfigErrorType
+	for errors.As(err, &applicationError) {
+		if applicationError.Type() == invalidConfigErrorType && applicationError.NonRetryable() {
+			return true
+		}
+		err = applicationError.Unwrap()
+	}
+	return false
 }
 
 // IsPanicError reports whether err is a PanicError.

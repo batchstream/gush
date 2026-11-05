@@ -119,15 +119,15 @@ func TestPickupTimeoutWithUnlimitedAttemptsHasNoOverallLimit(t *testing.T) {
 	}
 }
 
-// Temporal refuses a negative timeout, which is what the total would become by overflowing.
-func TestPickupTimeoutWithAttemptsTooManyToTotalHasNoOverallLimit(t *testing.T) {
+// Temporal refuses a negative timeout, which is what the total could become by overflowing.
+func TestPickupTimeoutWithAttemptsTooManyToTotalStopsAtTheLongestLimit(t *testing.T) {
 	config := DefaultStepConfig()
 	config.PickupTimeout = time.Minute
 	config.MaxAttempts = math.MaxInt32
 
 	options := newActivityOptions(config)
 
-	if options.ScheduleToCloseTimeout != 0 {
+	if options.ScheduleToCloseTimeout != maxDuration {
 		t.Errorf("schedule to close = %v", options.ScheduleToCloseTimeout)
 	}
 	if options.RetryPolicy.MaximumAttempts != math.MaxInt32 {

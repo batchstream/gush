@@ -112,7 +112,8 @@ func WithErrorIfRunning() FlowOption {
 	return flowOption(apply)
 }
 
-// WithTimeout limits the whole flow execution, including every retry.
+// WithTimeout limits the whole flow execution, including every retry. A negative timeout is an
+// error.
 func WithTimeout(timeout time.Duration) FlowOption {
 	apply := func(config *FlowConfig) {
 		config.Timeout = timeout

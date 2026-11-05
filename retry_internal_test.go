@@ -146,6 +146,11 @@ func TestStepConfigValidate(t *testing.T) {
 			config.MaxAttempts = math.MaxInt32
 			config.PickupTimeout = time.Minute
 		},
+		"attempts too many to total and no attempt timeout": func(config *StepConfig) {
+			config.AttemptTimeout = 0
+			config.MaxAttempts = math.MaxInt32
+			config.PickupTimeout = 30 * time.Minute
+		},
 	}
 	for name, change := range valid {
 		config := DefaultStepConfig()

@@ -159,7 +159,7 @@ A step that is already running only finds out about the cancellation through `ct
 | `WithTimeout(d)` | flow | Limit on the whole execution, including every retry. A negative one is an error. |
 | `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Settings left out of the JSON, or zero, use their defaults, and durations in JSON are integer nanoseconds. `WithErrorIfRunning` stays on once set. Whoever applies it chooses `RunFlow` or `StartFlow`. |
 | `WithQueue(q)` | step | Runs on another queue. |
-| `WithAttemptTimeout(d)` | step | Limit on each attempt, not the step as a whole. A negative one is an error, and so is zero without `WithPickupTimeout`. |
+| `WithAttemptTimeout(d)` | step | Limit on each attempt, not the step as a whole. A negative one is an error, and so is zero, unless `WithPickupTimeout` and a limited number of attempts give the step an overall limit. |
 | `WithHeartbeatTimeout(d)` | step | Fails an attempt that stops calling `ctx.Heartbeat()`. A negative one is an error. |
 | `WithPickupTimeout(d)` | step | Fails if no worker picks the step up in time. |
 | `WithWaitForCancel()` | step | When the flow is canceled, waits for the running step to end instead of returning at once. |

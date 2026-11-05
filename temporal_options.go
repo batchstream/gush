@@ -78,11 +78,7 @@ func newActivityOptions(config *StepConfig) workflow.ActivityOptions {
 			resolved := config.RetryPolicy
 			resolved.MaxAttempts = retryPolicy.MaximumAttempts
 			perAttempt := addDurations(config.PickupTimeout, config.AttemptTimeout)
-			total := addDurations(scaleDuration(resolved.MaxAttempts, perAttempt), resolved.totalBackoff())
-			// A total too long to hold is as good as unlimited attempts.
-			if total < maxDuration {
-				options.ScheduleToCloseTimeout = total
-			}
+			options.ScheduleToCloseTimeout = addDurations(scaleDuration(resolved.MaxAttempts, perAttempt), resolved.totalBackoff())
 		}
 	}
 	return options

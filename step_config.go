@@ -93,7 +93,8 @@ func WithWaitForCancel() StepOption {
 	return stepOption(apply)
 }
 
-// WithAttemptTimeout limits each attempt of the step.
+// WithAttemptTimeout limits each attempt of the step. See StepConfig.AttemptTimeout for what is
+// an error.
 func WithAttemptTimeout(timeout time.Duration) StepOption {
 	apply := func(config *StepConfig) {
 		config.AttemptTimeout = timeout
@@ -101,7 +102,8 @@ func WithAttemptTimeout(timeout time.Duration) StepOption {
 	return stepOption(apply)
 }
 
-// WithHeartbeatTimeout fails an attempt that goes this long without calling Heartbeat.
+// WithHeartbeatTimeout fails an attempt that goes this long without calling Heartbeat. A negative
+// timeout is an error.
 func WithHeartbeatTimeout(timeout time.Duration) StepOption {
 	apply := func(config *StepConfig) {
 		config.HeartbeatTimeout = timeout

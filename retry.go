@@ -21,12 +21,14 @@ const (
 )
 
 // timeoutErrorTypePrefix marks a NoRetry entry that names a timeout rather than an
-// ApplicationError type, and Temporal rejects one naming an unknown timeout.
+// ApplicationError type, and with more than one attempt Temporal rejects one naming an unknown
+// timeout.
 const timeoutErrorTypePrefix = "TemporalTimeout:"
 
 // invalidConfigErrorType is the ApplicationError type of a flow that failed on settings
-// validate rejected, which lets IsInvalidConfigError recognize it after it leaves the flow.
-const invalidConfigErrorType = "InvalidConfig"
+// validate rejected, which lets IsInvalidConfigError recognize it after it leaves the flow. It
+// carries the package's name so that an application's own error type does not match it.
+const invalidConfigErrorType = "GushInvalidConfig"
 
 // errInvalidConfig marks settings that Temporal refuses. See IsInvalidConfigError.
 var errInvalidConfig = errors.New("gush: invalid config")
@@ -63,8 +65,10 @@ type RetryPolicy struct {
 // failing, and an attempt count that only a mistake produces, such as a budget computed below
 // zero, which must not turn into retrying forever.
 //
-// Flow code calls it, so it must not reject what Temporal accepts: a refused command leaves no
-// history for a replay to meet, while a stricter check fails a flow in flight that ran it.
+// Flow code calls it, so a new check must not reject what Temporal accepts: a refused command
+// leaves no history for a replay to meet, while a stricter check fails a flow in flight that
+// ran it. The checks on the backoff settings are older than this rule, and loosening them would
+// change what replays see.
 func (policy RetryPolicy) validate(defaultAttempts int32) error {
 	switch {
 	case policy.MaxAttempts < UnlimitedAttempts:
