@@ -106,7 +106,7 @@ err := ctx.RunFlow(request)
 
 Flows and steps are registered under their bare Go function names, and can be called by that name as a string. Two functions with the same name in different packages collide, and `Serve` reports it. Use `NewFlowHandler` and `NewStepHandler` to choose a name, which closures and the instantiations of a generic function need too.
 
-Strings and byte slices, through any number of pointers and including types built on them, travel as raw bytes unless the type has its own JSON or text methods. Everything else travels as JSON, so read a value back as the type it was written. Adding or removing those methods changes how such a type encodes, so let flows carrying it finish first.
+Strings and byte slices, through any number of pointers and including types built on them, travel as raw bytes unless the type has its own JSON or text methods. Everything else travels as JSON, so read a value back as the type it was written. A pointer output stays nil when the output is empty. Adding or removing those methods changes how such a type encodes, so let flows carrying it finish first, and do the same when release notes say an upgrade changes how values travel.
 
 ### Parallel steps and cleanup
 
@@ -156,11 +156,11 @@ A step that is already running only finds out about the cancellation through `ct
 | `WithLogAttributes(m)` | both | The same, for several attributes. |
 | `WithID(id)` | flow | Flow ID. Otherwise one is generated, which `StartFlow` returns. A client's `RunFlow` or `StartFlow` joins a flow already running with this ID and ignores this run's flow, input and settings, so concurrent callers share one run. A child flow gets an error that `gush.IsFlowRunningError` recognizes. |
 | `WithErrorIfRunning()` | flow | A client's `RunFlow` or `StartFlow` returns that same error instead of joining. |
-| `WithTimeout(d)` | flow | Limit on the whole execution, including every retry. |
+| `WithTimeout(d)` | flow | Limit on the whole execution, including every retry. A negative one is an error. |
 | `WithConfig(c)` | flow | Starts from a `FlowConfig`, such as one decoded from a queue. Settings left out of the JSON, or zero, use their defaults, and durations in JSON are integer nanoseconds. `WithErrorIfRunning` stays on once set. Whoever applies it chooses `RunFlow` or `StartFlow`. |
 | `WithQueue(q)` | step | Runs on another queue. |
-| `WithAttemptTimeout(d)` | step | Limit on each attempt, not the step as a whole. |
-| `WithHeartbeatTimeout(d)` | step | Fails an attempt that stops calling `ctx.Heartbeat()`. |
+| `WithAttemptTimeout(d)` | step | Limit on each attempt, not the step as a whole. A negative one is an error, and so is zero without `WithPickupTimeout`. |
+| `WithHeartbeatTimeout(d)` | step | Fails an attempt that stops calling `ctx.Heartbeat()`. A negative one is an error. |
 | `WithPickupTimeout(d)` | step | Fails if no worker picks the step up in time. |
 | `WithWaitForCancel()` | step | When the flow is canceled, waits for the running step to end instead of returning at once. |
 
@@ -187,7 +187,7 @@ err := ctx.RunStep(Charge, order, &receipt, gush.WithNoRetry("Declined"))
 
 `WithNoRetry` matches the type of a `gush.NewApplicationError`. Pass `gush.StepTimeoutErrorType` to stop retrying steps that timed out.
 
-Errors from `RunFlow` and `RunStep` work with `errors.As`, `gush.IsApplicationError`, `gush.IsPermanentError` and `gush.IsPanicError`. `gush.IsInvalidConfigError` recognizes a flow or step refused because of settings Temporal could never run, so retrying them cannot help. Wrapping one with `fmt.Errorf` and `%w` keeps its type and retryability. Its details stay on the original error, so `errors.As` can find an outer error without them. Call `errors.Unwrap` on that one until `Details` succeeds.
+Errors from `RunFlow` and `RunStep` work with `errors.As`, `gush.IsApplicationError`, `gush.IsPermanentError` and `gush.IsPanicError`. `gush.IsInvalidConfigError` recognizes a request refused as invalid, such as settings Temporal refuses or an input over its size limit, so sending it again cannot help. Wrapping one with `fmt.Errorf` and `%w` keeps its type and retryability. Its details stay on the original error, so `errors.As` can find an outer error without them. Call `errors.Unwrap` on that one until `Details` succeeds.
 
 ## Priority and fairness
 
