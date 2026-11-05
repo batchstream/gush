@@ -265,8 +265,9 @@ func temporalBackoff(policy RetryPolicy) time.Duration {
 	}
 	var total time.Duration
 	for retry := range policy.MaxAttempts - 1 {
-		delay := float64(interval) * math.Pow(coefficient, float64(retry))
-		total += min(time.Duration(delay), maxInterval)
+		// Cap before converting: a float beyond int64 converts differently on each platform.
+		delay := min(float64(interval)*math.Pow(coefficient, float64(retry)), float64(maxInterval))
+		total += time.Duration(delay)
 	}
 	return total
 }
