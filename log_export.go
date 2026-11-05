@@ -85,7 +85,7 @@ func InitLogExport() (shutdown func(), err error) {
 		return func() {}, nil
 	}
 
-	exporter, err := newLogExporterFromEnv(context.Background())
+	exporter, err := NewLogExporter(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -127,10 +127,11 @@ func releaseLogExport() {
 	}
 }
 
-// newLogExporterFromEnv returns nil when no endpoint is configured. Otherwise the exporter
-// reads OpenTelemetry's standard variables itself. It accepts a malformed endpoint, such as
-// collector:4318, and then loses every record, so that is an error here.
-func newLogExporterFromEnv(ctx context.Context) (sdklog.Exporter, error) {
+// NewLogExporter creates the OTLP exporter InitLogExport uses, from the same variables, for a
+// process that builds its own LoggerProvider. It returns nil when no endpoint is configured.
+// The exporter reads OpenTelemetry's standard variables itself. It accepts a malformed
+// endpoint, such as collector:4318, and then loses every record, so that is an error here.
+func NewLogExporter(ctx context.Context) (sdklog.Exporter, error) {
 	variable, endpoint := firstEnv(envOTLPLogsEndpoint, envOTLPEndpoint)
 	if endpoint == "" {
 		return nil, nil
