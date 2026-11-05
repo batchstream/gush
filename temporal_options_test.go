@@ -205,6 +205,31 @@ func TestTotalBackoff(t *testing.T) {
 			policy:   RetryPolicy{InitialInterval: time.Second, BackoffCoefficient: 1, MaxInterval: time.Second, MaxAttempts: 1 << 30},
 			expected: time.Duration(1<<30-1) * time.Second,
 		},
+		{
+			name:     "a cap reached exactly",
+			policy:   RetryPolicy{InitialInterval: time.Second, BackoffCoefficient: 2, MaxInterval: 64 * time.Second, MaxAttempts: 10},
+			expected: (1 + 2 + 4 + 8 + 16 + 32 + 64 + 64 + 64) * time.Second,
+		},
+		{
+			name:     "the default cap",
+			policy:   RetryPolicy{MaxAttempts: 10},
+			expected: (1 + 2 + 4 + 8 + 16 + 32 + 64 + 100 + 100) * time.Second,
+		},
+		{
+			name:     "rounding does not fall short",
+			policy:   RetryPolicy{InitialInterval: 22, BackoffCoefficient: 4.65, MaxAttempts: 2},
+			expected: 22,
+		},
+		{
+			name:     "a huge coefficient does not overflow",
+			policy:   RetryPolicy{InitialInterval: time.Second, BackoffCoefficient: 1e300, MaxInterval: time.Minute, MaxAttempts: 3},
+			expected: time.Second + time.Minute,
+		},
+		{
+			name:     "a NaN coefficient adds no growth",
+			policy:   RetryPolicy{InitialInterval: time.Second, BackoffCoefficient: math.NaN(), MaxAttempts: 4},
+			expected: 3 * time.Second,
+		},
 	}
 
 	for _, tt := range tests {
@@ -226,5 +251,69 @@ func TestWithWaitForCancelReachesTemporal(t *testing.T) {
 
 	if !newActivityOptions(config).WaitForCancellation {
 		t.Error("WithWaitForCancel did not reach the activity options")
+	}
+}
+
+// Delays too small to grow once truncated, or a coefficient barely above one, used to run a loop
+// for every retry inside the flow and trip the deadlock detector.
+// temporalBackoff adds up the delays as Temporal computes them, one retry at a time.
+func temporalBackoff(policy RetryPolicy) time.Duration {
+	interval, maxInterval := policy.intervals()
+	coefficient := policy.BackoffCoefficient
+	if coefficient == 0 {
+		coefficient = 2.0
+	}
+	var total time.Duration
+	for retry := range policy.MaxAttempts - 1 {
+		// Cap before converting: a float beyond int64 converts differently on each platform.
+		delay := min(float64(interval)*math.Pow(coefficient, float64(retry)), float64(maxInterval))
+		total += time.Duration(delay)
+	}
+	return total
+}
+
+func TestTotalBackoffCoversTemporalsDelays(t *testing.T) {
+	intervals := []time.Duration{1, 7, 22, time.Millisecond, 3 * time.Second}
+	coefficients := []float64{1.01, 1.1, 1.5, 2, 4.65, 10}
+	for _, interval := range intervals {
+		for _, coefficient := range coefficients {
+			for attempts := int32(1); attempts <= 40; attempts++ {
+				policy := RetryPolicy{
+					InitialInterval:    interval,
+					BackoffCoefficient: coefficient,
+					MaxInterval:        1000 * interval,
+					MaxAttempts:        attempts,
+				}
+				want := temporalBackoff(policy)
+				got := policy.totalBackoff()
+				// Float error stays far below a nanosecond per retry.
+				slack := time.Duration(attempts) + want/1e9
+				if got < want || got > want+slack {
+					t.Fatalf("%+v: totalBackoff() = %d, Temporal waits %d", policy, got, want)
+				}
+			}
+		}
+	}
+}
+
+func TestTotalBackoffIsQuickForAnyPolicy(t *testing.T) {
+	policies := map[string]RetryPolicy{
+		"nanosecond delays": {InitialInterval: time.Nanosecond, BackoffCoefficient: 1.1, MaxAttempts: math.MaxInt32},
+		"slow growth":       {InitialInterval: time.Second, BackoffCoefficient: 1.0000001, MaxAttempts: math.MaxInt32},
+	}
+	for name, policy := range policies {
+		t.Run(name, func(t *testing.T) {
+			// A loop over these retries takes seconds, so this bound leaves a loaded machine room.
+			start := time.Now()
+			got := policy.totalBackoff()
+			if elapsed := time.Since(start); elapsed > time.Second {
+				t.Errorf("totalBackoff took %v", elapsed)
+			}
+
+			_, maxInterval := policy.intervals()
+			if lower := scaleDuration(policy.MaxAttempts/2, maxInterval); got < lower {
+				t.Errorf("totalBackoff() = %v, want at least %v", got, lower)
+			}
+		})
 	}
 }

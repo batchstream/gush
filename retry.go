@@ -122,32 +122,37 @@ func (policy RetryPolicy) intervals() (initial, maximum time.Duration) {
 }
 
 // totalBackoff returns the time spent waiting between attempts if all MaxAttempts are used,
-// applying the same defaults Temporal does to zero settings.
+// applying the same defaults Temporal does to zero settings. The delay before retry k is
+// interval*coefficient^k until it reaches the cap, so this sums that run in closed form, as
+// Temporal computes each delay, and rounds up: Temporal truncates each delay, so the total
+// never falls short of its own. A loop over the retries ran inside the flow and, with millions
+// of attempts and delays too small to grow, held it past the deadlock detector's limit.
 func (policy RetryPolicy) totalBackoff() time.Duration {
+	retries := policy.MaxAttempts - 1
+	if retries <= 0 {
+		return 0
+	}
 	interval, maxInterval := policy.intervals()
 	coefficient := policy.BackoffCoefficient
 	if coefficient == 0 {
 		coefficient = 2.0
 	}
-
-	var total time.Duration
-	for retries := policy.MaxAttempts - 1; retries > 0; retries-- {
-		if interval >= maxInterval {
-			return addDurations(total, scaleDuration(retries, maxInterval))
-		}
-		if coefficient <= 1 {
-			return addDurations(total, scaleDuration(retries, interval))
-		}
-		total = addDurations(total, interval)
-
-		next := float64(interval) * coefficient
-		if next >= float64(maxInterval) {
-			interval = maxInterval
-			continue
-		}
-		interval = time.Duration(next)
+	if math.IsNaN(coefficient) || coefficient <= 1 || interval >= maxInterval {
+		return scaleDuration(retries, interval)
 	}
-	return total
+
+	// Retries before the delay reaches the cap; a ratio that is a power of the coefficient
+	// counts the delay equal to the cap on either side, which gives the same total.
+	growing := math.Ceil(math.Log(float64(maxInterval)/float64(interval)) / math.Log(coefficient))
+	geometric := min(float64(retries), growing)
+	// Dividing first keeps a huge coefficient from overflowing the product.
+	sum := float64(interval) * ((math.Pow(coefficient, geometric) - 1) / (coefficient - 1))
+
+	total := maxDuration
+	if sum < float64(maxDuration) {
+		total = time.Duration(math.Ceil(sum))
+	}
+	return addDurations(total, scaleDuration(retries-int32(geometric), maxInterval))
 }
 
 // addDurations returns a+b, stopping at maxDuration rather than overflowing.

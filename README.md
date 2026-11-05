@@ -187,7 +187,7 @@ err := ctx.RunStep(Charge, order, &receipt, gush.WithNoRetry("Declined"))
 
 `WithNoRetry` matches the type of a `gush.NewApplicationError`. Pass `gush.StepTimeoutErrorType` to stop retrying steps that timed out. A `TemporalTimeout:` entry naming a timeout Temporal does not know is an error when there can be a retry.
 
-Errors from `RunFlow` and `RunStep` work with `errors.As`, `gush.IsApplicationError`, `gush.IsPermanentError` and `gush.IsPanicError`. `gush.IsInvalidConfigError` recognizes a request refused as invalid, such as settings Temporal refuses or an input over its size limit, so sending it again cannot help. Wrapping one with `fmt.Errorf` and `%w` keeps its type and retryability. Its details stay on the original error, so `errors.As` can find an outer error without them. Call `errors.Unwrap` on that one until `Details` succeeds.
+Errors from `RunFlow` and `RunStep` work with `errors.As`, `gush.IsApplicationError`, `gush.IsPermanentError` and `gush.IsPanicError`. `gush.IsInvalidConfigError` recognizes a request refused as invalid, such as settings Temporal refuses, an input over its 2MiB blob limit or a request over gRPC's 4MiB message limit, so sending it again cannot help. Wrapping one with `fmt.Errorf` and `%w` keeps its type and retryability. Its details stay on the original error, so `errors.As` can find an outer error without them. Call `errors.Unwrap` on that one until `Details` succeeds.
 
 ## Priority and fairness
 

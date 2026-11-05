@@ -10,6 +10,8 @@ import (
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/temporal"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestUnwrapError(t *testing.T) {
@@ -419,14 +421,19 @@ func TestIsInvalidConfigError(t *testing.T) {
 	sameType := NewApplicationError("settings not loaded yet", invalidConfigErrorType)
 	applicationType := NewPermanentError("settings not loaded yet", "InvalidConfig", nil)
 
-	recognized := []error{failedFlow, wrappedByFlow, fmt.Errorf("run: %w", failedFlow), invalid, fmt.Errorf("start: %w", invalid), rejected, fmt.Errorf("start: %w", rejected)}
+	// What the SDK returns when gRPC refuses a request over its message size limit.
+	tooLarge := status.Error(codes.ResourceExhausted, "grpc: received message larger than max (5242977 vs. 4194304)")
+	// A rate limit shares the code and can succeed later.
+	rateLimited := status.Error(codes.ResourceExhausted, "namespace rate limit exceeded")
+
+	recognized := []error{failedFlow, wrappedByFlow, fmt.Errorf("run: %w", failedFlow), invalid, fmt.Errorf("start: %w", invalid), rejected, fmt.Errorf("start: %w", rejected), tooLarge, fmt.Errorf("start: %w", tooLarge)}
 	for _, err := range recognized {
 		if !IsInvalidConfigError(err) {
 			t.Errorf("IsInvalidConfigError(%v) = false", err)
 		}
 	}
 
-	others := []error{sameType, applicationType, nil, errors.New("some other failure"), serviceerror.NewUnavailable("try later")}
+	others := []error{sameType, applicationType, nil, errors.New("some other failure"), serviceerror.NewUnavailable("try later"), rateLimited, serviceerror.NewResourceExhausted(0, "busy")}
 	for _, err := range others {
 		if IsInvalidConfigError(err) {
 			t.Errorf("IsInvalidConfigError(%v) = true", err)

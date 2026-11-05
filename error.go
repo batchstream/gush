@@ -7,6 +7,8 @@ import (
 
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/temporal"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // ApplicationError is an error with a type name that retry policies can match.
@@ -52,15 +54,20 @@ func IsFlowRunningError(err error) bool {
 // IsInvalidConfigError reports whether a request was refused as invalid, so sending it again
 // cannot succeed: Gush found settings Temporal refuses, including in a flow that has since
 // failed on them, or the server answered InvalidArgument. The server gives that answer for
-// more than settings, such as an input over its size limit. Past a flow it sees through Abort,
-// NewPermanentError and %w, but not errors.Join or several %w, and not a client's refusal inside
-// a step, whose text is all that crosses the step.
+// more than settings, such as an input over its blob size limit, 2MiB by default. A request over
+// gRPC's message size limit, 4MiB by default, is refused before it reaches Temporal, and that
+// counts too. Past a flow it sees through Abort, NewPermanentError and %w, but not errors.Join
+// or several %w, and not a client's refusal inside a step, whose text is all that crosses the
+// step.
 func IsInvalidConfigError(err error) bool {
 	if errors.Is(err, errInvalidConfig) {
 		return true
 	}
 	var rejected *serviceerror.InvalidArgument
 	if errors.As(err, &rejected) {
+		return true
+	}
+	if isMessageTooLarge(err) {
 		return true
 	}
 
@@ -72,6 +79,36 @@ func IsInvalidConfigError(err error) bool {
 			return true
 		}
 		err = applicationError.Unwrap()
+	}
+	return false
+}
+
+// messageTooLargePrefixes are how gRPC words a refusal of a message over its size limit. The
+// code alone, ResourceExhausted, cannot tell, because Temporal also uses it for rate limits.
+var messageTooLargePrefixes = []string{
+	"grpc: received message larger than max",
+	"grpc: message after decompression larger than max",
+	"grpc: received message after decompression larger than max",
+	"grpc: trying to send message larger than max",
+	"grpc: message too large",
+	"trying to send message larger than max",
+}
+
+// isMessageTooLarge reports whether gRPC refused a request for its size. The SDK gives such an
+// error its own type and does not retry it, but nothing outside the SDK can name that type.
+func isMessageTooLarge(err error) bool {
+	var withStatus interface{ GRPCStatus() *status.Status }
+	if !errors.As(err, &withStatus) {
+		return false
+	}
+	grpcStatus := withStatus.GRPCStatus()
+	if grpcStatus == nil || grpcStatus.Code() != codes.ResourceExhausted {
+		return false
+	}
+	for _, prefix := range messageTooLargePrefixes {
+		if strings.HasPrefix(grpcStatus.Message(), prefix) {
+			return true
+		}
 	}
 	return false
 }
