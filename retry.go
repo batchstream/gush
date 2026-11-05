@@ -1,9 +1,12 @@
 package gush
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 )
 
@@ -15,6 +18,13 @@ const (
 	defaultFlowAttempts int32 = 1
 	defaultStepAttempts int32 = 10
 )
+
+// timeoutErrorTypePrefix marks a NoRetry entry that names a timeout rather than an
+// ApplicationError type, and Temporal rejects one naming an unknown timeout.
+const timeoutErrorTypePrefix = "TemporalTimeout:"
+
+// errInvalidConfig marks settings that Temporal could never run. See IsInvalidConfigError.
+var errInvalidConfig = errors.New("gush: invalid config")
 
 // RetryPolicy defines how flows and steps are retried after they fail. Every setting left
 // at zero uses its default.
@@ -35,7 +45,9 @@ type RetryPolicy struct {
 	// number is an error.
 	MaxAttempts int32 `json:"max_attempts"`
 
-	// NoRetry lists the ApplicationError types that fail immediately.
+	// NoRetry lists the ApplicationError types that fail immediately. An entry starting with
+	// TemporalTimeout: names a timeout instead, such as StepTimeoutErrorType, and any
+	// other timeout name is an error.
 	NoRetry []string `json:"no_retry"`
 }
 
@@ -45,13 +57,24 @@ type RetryPolicy struct {
 func (policy RetryPolicy) validate() error {
 	switch {
 	case policy.MaxAttempts < UnlimitedAttempts:
-		return fmt.Errorf("gush: max attempts %d must be positive, zero for the default, or UnlimitedAttempts", policy.MaxAttempts)
+		return fmt.Errorf("%w: max attempts %d must be positive, zero for the default, or UnlimitedAttempts", errInvalidConfig, policy.MaxAttempts)
 	case policy.BackoffCoefficient != 0 && policy.BackoffCoefficient < 1:
-		return fmt.Errorf("gush: backoff coefficient %v must be at least 1", policy.BackoffCoefficient)
+		return fmt.Errorf("%w: backoff coefficient %v must be at least 1", errInvalidConfig, policy.BackoffCoefficient)
 	case policy.InitialInterval < 0:
-		return fmt.Errorf("gush: initial interval %v must not be negative", policy.InitialInterval)
+		return fmt.Errorf("%w: initial interval %v must not be negative", errInvalidConfig, policy.InitialInterval)
 	case policy.MaxInterval < 0:
-		return fmt.Errorf("gush: max interval %v must not be negative", policy.MaxInterval)
+		return fmt.Errorf("%w: max interval %v must not be negative", errInvalidConfig, policy.MaxInterval)
+	}
+
+	for _, errorType := range policy.NoRetry {
+		timeoutName, isTimeout := strings.CutPrefix(errorType, timeoutErrorTypePrefix)
+		if !isTimeout {
+			continue
+		}
+		timeoutType, err := enums.TimeoutTypeFromString(timeoutName)
+		if err != nil || timeoutType == enums.TIMEOUT_TYPE_UNSPECIFIED {
+			return fmt.Errorf("%w: no retry entry %q names an unknown timeout", errInvalidConfig, errorType)
+		}
 	}
 	return nil
 }

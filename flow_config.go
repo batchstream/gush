@@ -1,6 +1,7 @@
 package gush
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 	"time"
@@ -36,6 +37,15 @@ func DefaultFlowConfig() *FlowConfig {
 	config.Priority = PriorityMedium
 	config.LogAttributes = make(map[string]any)
 	return config
+}
+
+// validate rejects settings Temporal cannot run. On a child flow they would leave the parent
+// Running with its tasks failing.
+func (config *FlowConfig) validate() error {
+	if config.Timeout < 0 {
+		return fmt.Errorf("%w: timeout %v must not be negative", errInvalidConfig, config.Timeout)
+	}
+	return config.RetryPolicy.validate()
 }
 
 // Apply applies options to config in order.

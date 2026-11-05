@@ -1,6 +1,9 @@
 package gush
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // StepConfig holds the settings of one step run.
 type StepConfig struct {
@@ -49,6 +52,20 @@ type stepOption func(config *StepConfig)
 
 func (option stepOption) applyStep(config *StepConfig) {
 	option(config)
+}
+
+// validate rejects settings Temporal cannot run, which would leave the flow Running with its
+// tasks failing.
+func (config *StepConfig) validate() error {
+	switch {
+	case config.AttemptTimeout <= 0:
+		return fmt.Errorf("%w: attempt timeout %v must be positive", errInvalidConfig, config.AttemptTimeout)
+	case config.HeartbeatTimeout < 0:
+		return fmt.Errorf("%w: heartbeat timeout %v must not be negative", errInvalidConfig, config.HeartbeatTimeout)
+	case config.PickupTimeout < 0:
+		return fmt.Errorf("%w: pickup timeout %v must not be negative", errInvalidConfig, config.PickupTimeout)
+	}
+	return config.RetryPolicy.validate()
 }
 
 // WithQueue runs the step on another task queue.

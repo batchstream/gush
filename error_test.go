@@ -403,3 +403,26 @@ func TestIsFlowRunningError(t *testing.T) {
 		t.Error("IsFlowRunningError(plain) = true")
 	}
 }
+
+func TestIsInvalidConfigError(t *testing.T) {
+	config := DefaultFlowConfig()
+	config.Timeout = -1
+	client := &Client{}
+	request := FlowRequest{Flow: "AnyFlow"}
+	_, invalid := client.StartFlow(context.Background(), request, WithConfig(config))
+	rejected := serviceerror.NewInvalidArgument("the server said no")
+
+	recognized := []error{invalid, fmt.Errorf("start: %w", invalid), rejected, fmt.Errorf("start: %w", rejected)}
+	for _, err := range recognized {
+		if !IsInvalidConfigError(err) {
+			t.Errorf("IsInvalidConfigError(%v) = false", err)
+		}
+	}
+
+	others := []error{nil, errors.New("some other failure"), serviceerror.NewUnavailable("try later")}
+	for _, err := range others {
+		if IsInvalidConfigError(err) {
+			t.Errorf("IsInvalidConfigError(%v) = true", err)
+		}
+	}
+}

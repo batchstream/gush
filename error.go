@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/temporal"
 )
 
@@ -46,6 +47,17 @@ func IsPermanentError(err error) bool {
 // after it crosses the step.
 func IsFlowRunningError(err error) bool {
 	return temporal.IsWorkflowExecutionAlreadyStartedError(err)
+}
+
+// IsInvalidConfigError reports whether a flow or step did not start because of its settings:
+// Gush found settings Temporal could never run, or the server rejected the request as
+// invalid. Retrying the same settings cannot succeed.
+func IsInvalidConfigError(err error) bool {
+	if errors.Is(err, errInvalidConfig) {
+		return true
+	}
+	var rejected *serviceerror.InvalidArgument
+	return errors.As(err, &rejected)
 }
 
 // IsPanicError reports whether err is a PanicError.

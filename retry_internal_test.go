@@ -1,6 +1,7 @@
 package gush
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -13,10 +14,14 @@ func TestRetryPolicyValidate(t *testing.T) {
 		"negative coefficient": {BackoffCoefficient: -1},
 		"negative initial":     {InitialInterval: -time.Second},
 		"negative maximum":     {MaxInterval: -time.Second},
+		"an unknown timeout":   {NoRetry: []string{"TemporalTimeout:Soon"}},
+		"no timeout name":      {NoRetry: []string{"TemporalTimeout:"}},
+		"unspecified timeout":  {NoRetry: []string{"TemporalTimeout:Unspecified"}},
 	}
 	for name, policy := range invalid {
-		if policy.validate() == nil {
-			t.Errorf("%s: validate() = nil", name)
+		err := policy.validate()
+		if !errors.Is(err, errInvalidConfig) {
+			t.Errorf("%s: validate() = %v, want an invalid config error", name, err)
 		}
 	}
 
@@ -26,6 +31,9 @@ func TestRetryPolicyValidate(t *testing.T) {
 		"a number":           {MaxAttempts: 3},
 		"a coefficient of 1": {BackoffCoefficient: 1},
 		"a cap below first":  {InitialInterval: time.Minute, MaxInterval: time.Second},
+		"an error type":      {NoRetry: []string{"Declined", ""}},
+		"the step timeout":   {NoRetry: []string{StepTimeoutErrorType}},
+		"another timeout":    {NoRetry: []string{"TemporalTimeout:Heartbeat"}},
 	}
 	for name, policy := range valid {
 		if err := policy.validate(); err != nil {
@@ -69,5 +77,52 @@ func TestTotalBackoffWithACapBelowTheFirstDelay(t *testing.T) {
 
 	if expected := 400 * time.Second; got != expected {
 		t.Errorf("totalBackoff() = %v, want %v", got, expected)
+	}
+}
+
+func TestStepConfigValidate(t *testing.T) {
+	invalid := map[string]func(config *StepConfig){
+		"no attempt timeout":       func(config *StepConfig) { config.AttemptTimeout = 0 },
+		"negative attempt timeout": func(config *StepConfig) { config.AttemptTimeout = -time.Second },
+		"negative heartbeat":       func(config *StepConfig) { config.HeartbeatTimeout = -time.Second },
+		"negative pickup":          func(config *StepConfig) { config.PickupTimeout = -time.Second },
+		"a bad retry policy":       func(config *StepConfig) { config.MaxAttempts = -2 },
+	}
+	for name, change := range invalid {
+		config := DefaultStepConfig()
+		change(config)
+		err := config.validate()
+		if !errors.Is(err, errInvalidConfig) {
+			t.Errorf("%s: validate() = %v, want an invalid config error", name, err)
+		}
+	}
+
+	config := DefaultStepConfig()
+	config.HeartbeatTimeout = time.Second
+	config.PickupTimeout = time.Second
+	err := config.validate()
+	if err != nil {
+		t.Errorf("valid settings: validate() = %v", err)
+	}
+}
+
+func TestFlowConfigValidate(t *testing.T) {
+	config := DefaultFlowConfig()
+	config.Timeout = -time.Second
+	err := config.validate()
+	if !errors.Is(err, errInvalidConfig) {
+		t.Errorf("negative timeout: validate() = %v, want an invalid config error", err)
+	}
+
+	config = DefaultFlowConfig()
+	config.MaxAttempts = -2
+	err = config.validate()
+	if !errors.Is(err, errInvalidConfig) {
+		t.Errorf("a bad retry policy: validate() = %v, want an invalid config error", err)
+	}
+
+	err = DefaultFlowConfig().validate()
+	if err != nil {
+		t.Errorf("defaults: validate() = %v", err)
 	}
 }
