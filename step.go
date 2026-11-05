@@ -69,6 +69,10 @@ type StepInfo struct {
 // policy, pass a NewApplicationError, which is a request to retry. A canceled error cancels
 // the step if it is being canceled, and otherwise fails it for good too. An ApplicationError
 // caused by a cancellation is recorded without that cause or its details.
+//
+// A result over Temporal's blob size limit, 2MiB by default, fails the step on the server while
+// Resume returns nil, because the server accepts the request and then refuses the result. One
+// over gRPC's 4MiB message limit makes Resume return an error IsInvalidConfigError recognizes.
 func (c *Client) Resume(ctx context.Context, resumeToken string, result any, stepErr error) error {
 	token, err := decodeResumeToken(resumeToken)
 	if err != nil {

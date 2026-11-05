@@ -4,6 +4,7 @@ package gush_test
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -1958,4 +1959,23 @@ func TestStepInitialIntervalAboveTheDefaultCapRuns(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 42, output.Amount)
+}
+
+// Temporal refuses an input over its blob size limit, and gRPC refuses one over its message size
+// limit before Temporal sees it. Sending either again cannot succeed.
+func TestStartFlowRefusesAnOversizedInput(t *testing.T) {
+	sizes := map[string]int{"over the blob limit": 3 << 20, "over the message limit": 5 << 20}
+	for name, size := range sizes {
+		t.Run(name, func(t *testing.T) {
+			// Random bytes, so compression cannot bring the payload under either limit.
+			input := make([]byte, size)
+			_, err := rand.Read(input)
+			require.NoError(t, err)
+
+			_, err = testClient.StartFlow(testContext(t), flowRequest(Double, input, nil))
+
+			require.Error(t, err)
+			assert.True(t, gush.IsInvalidConfigError(err), "%v", err)
+		})
+	}
 }
