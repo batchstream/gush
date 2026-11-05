@@ -83,6 +83,7 @@ func runWithTemporal(m *testing.M) int {
 
 	serveContext, stopServing := context.WithCancel(context.Background())
 	testWorker := gush.NewWorker(testQueue).
+		WithFlows(InvalidStepTimeoutFlow, InvalidPickupTimeoutFlow, InvalidNoRetryFlow, InvalidChildTimeoutFlow, PointerOutputFlow).
 		WithFlows(CancelableApprovalFlow, InvalidStepAttemptsFlow, InvalidChildAttemptsFlow, InvalidStartAttemptsFlow,
 			HighInitialIntervalFlow, Double, FailingFlow, ParentOfFailingFlow, FailingStepFlow, PlainFailureFlow, AbortFlow, ApprovalFlow,
 			ExpiringApprovalFlow, TimeoutFlow, HeartbeatFlow, SilentFlow, ReplayFlow, AttributesFlow, AttributesChildFlow,
@@ -1789,6 +1790,64 @@ func TestNegativeAttemptsOtherThanUnlimitedAreAnError(t *testing.T) {
 		assert.True(t, gush.IsPermanentError(err), "%v", err)
 		assert.ErrorContains(t, err, "max attempts -2")
 	}
+}
+
+func InvalidStepTimeoutFlow(ctx *gush.FlowContext) (any, error) {
+	return nil, ctx.RunStep(DoubleStep, order{ID: "bad-timeout", Amount: 1}, nil, gush.WithHeartbeatTimeout(-time.Second))
+}
+
+func InvalidPickupTimeoutFlow(ctx *gush.FlowContext) (any, error) {
+	return nil, ctx.RunStep(DoubleStep, order{ID: "bad-pickup", Amount: 1}, nil, gush.WithPickupTimeout(-time.Second))
+}
+
+func InvalidNoRetryFlow(ctx *gush.FlowContext) (any, error) {
+	return nil, ctx.RunStep(DoubleStep, order{ID: "bad-no-retry", Amount: 1}, nil, gush.WithNoRetry("TemporalTimeout:Soon"))
+}
+
+func InvalidChildTimeoutFlow(ctx *gush.FlowContext) (any, error) {
+	request := gush.FlowRequest{Flow: SmallFlow}
+	return nil, ctx.RunFlow(request, gush.WithTimeout(-time.Second))
+}
+
+// Each of these used to leave its flow Running, with flow tasks failing until someone looked.
+func TestSettingsTemporalCannotRunFailTheFlow(t *testing.T) {
+	ctx := testContext(t)
+
+	flows := []any{InvalidStepTimeoutFlow, InvalidPickupTimeoutFlow, InvalidNoRetryFlow, InvalidChildTimeoutFlow}
+	for _, flow := range flows {
+		request := flowRequest(flow, nil, nil)
+		err := testClient.RunFlow(ctx, request)
+		assert.True(t, gush.IsPermanentError(err), "%v", err)
+		assert.ErrorContains(t, err, "invalid config")
+	}
+
+	_, err := testClient.StartFlow(ctx, flowRequest(SmallFlow, nil, nil), gush.WithTimeout(-time.Second))
+	assert.True(t, gush.IsInvalidConfigError(err), "%v", err)
+	_, err = testClient.StartFlow(ctx, flowRequest(SmallFlow, nil, nil), gush.WithNoRetry("TemporalTimeout:Soon"))
+	assert.True(t, gush.IsInvalidConfigError(err), "%v", err)
+}
+
+func TestServerRejectionIsAnInvalidConfigError(t *testing.T) {
+	ctx := testContext(t)
+
+	tooLong := strings.Repeat("x", 2000)
+	_, err := testClient.StartFlow(ctx, flowRequest(SmallFlow, nil, nil), gush.WithID(tooLong))
+	assert.True(t, gush.IsInvalidConfigError(err), "%v", err)
+}
+
+func PointerOutputFlow(ctx *gush.FlowContext) (any, error) {
+	text := "pointer"
+	return &text, nil
+}
+
+func TestPointerToStringOutputArrivesRaw(t *testing.T) {
+	ctx := testContext(t)
+
+	var output *string
+	err := testClient.RunFlow(ctx, flowRequest(PointerOutputFlow, nil, &output))
+	require.NoError(t, err)
+	require.NotNil(t, output)
+	assert.Equal(t, "pointer", *output)
 }
 
 func HighInitialIntervalFlow(ctx *gush.FlowContext) (any, error) {
