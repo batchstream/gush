@@ -149,6 +149,13 @@ func IsResumeTokenError(err error) bool {
 		return true
 	}
 
+	return IsStepGoneError(err)
+}
+
+// IsStepGoneError reports whether Resume failed because the step no longer exists, such as
+// after it timed out or was already resumed. It tells a late callback from a token that was
+// never good: every such error is also an IsResumeTokenError, and not the other way around.
+func IsStepGoneError(err error) bool {
 	var notFound *serviceerror.NotFound
 	return errors.As(err, &notFound)
 }

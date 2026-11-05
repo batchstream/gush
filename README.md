@@ -230,6 +230,8 @@ err = client.Resume(ctx, resumeToken, decision, nil)
 
 An error passed to `Resume` fails the step for good, so a rejection does not send the request again. To run the code again under the step's retry policy, pass a `gush.NewApplicationError`. A canceled error cancels the step if it is being canceled, and otherwise fails it for good too.
 
+A callback that arrives after the step ended fails with an error `gush.IsStepGoneError` reports. `gush.IsResumeTokenError` also covers a token that was never valid.
+
 ## Changing running flows
 
 Flows can run for a long time, and a replay must take the same path it took originally. `Version` keeps old executions on the old code.

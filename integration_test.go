@@ -418,6 +418,18 @@ func TestSuspendedStepFinishesWithResume(t *testing.T) {
 	err := testClient.Resume(ctx, token, "again", nil)
 	require.Error(t, err)
 	assert.True(t, gush.IsResumeTokenError(err), "%v", err)
+	assert.True(t, gush.IsStepGoneError(err), "%v", err)
+}
+
+// The server rejects these as unreadable, which is not the same as a step that has ended.
+func TestUnreadableResumeTokenIsNotAGoneStep(t *testing.T) {
+	ctx := testContext(t)
+
+	err := testClient.Resume(ctx, "bnVsbA==", "result", nil)
+
+	require.Error(t, err)
+	assert.True(t, gush.IsResumeTokenError(err), "%v", err)
+	assert.False(t, gush.IsStepGoneError(err), "%v", err)
 }
 
 func TestSuspendedStepFailsWithResumeError(t *testing.T) {
