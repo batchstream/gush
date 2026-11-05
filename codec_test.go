@@ -483,3 +483,110 @@ func TestDecodeIntoAny(t *testing.T) {
 	expected := map[string]any{"a": 1.0}
 	require.Equal(t, expected, output)
 }
+
+type namedByte byte
+
+type namedBytes []namedByte
+
+// jsonByte has its own JSON form, which makes a slice of it a list, as in encoding/json.
+type jsonByte byte
+
+func (b jsonByte) MarshalJSON() ([]byte, error) {
+	return json.Marshal(int(b) + 1)
+}
+
+func (b *jsonByte) UnmarshalJSON(data []byte) error {
+	var value int
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return err
+	}
+	*b = jsonByte(value - 1)
+	return nil
+}
+
+func TestSliceOfNamedBytesTravelsRaw(t *testing.T) {
+	encoded, err := Encode([]namedByte("raw"))
+	require.NoError(t, err)
+	require.Equal(t, "raw", string(encoded))
+	encoded, err = Encode(namedBytes("raw"))
+	require.NoError(t, err)
+	require.Equal(t, "raw", string(encoded))
+
+	var plain []namedByte
+	require.NoError(t, Decode([]byte("raw"), &plain))
+	require.Equal(t, []namedByte("raw"), plain)
+	var named namedBytes
+	require.NoError(t, Decode([]byte("raw"), &named))
+	require.Equal(t, namedBytes("raw"), named)
+}
+
+func TestSliceOfBytesWithTheirOwnJSONIsAList(t *testing.T) {
+	encoded, err := Encode([]jsonByte{1, 2})
+	require.NoError(t, err)
+	require.Equal(t, "[2,3]", string(encoded))
+
+	var decoded []jsonByte
+	require.NoError(t, Decode(encoded, &decoded))
+	require.Equal(t, []jsonByte{1, 2}, decoded)
+}
+
+func TestPointersOfAnyDepthReachRawValues(t *testing.T) {
+	text := "done"
+	pointer := &text
+	encoded, err := Encode(&pointer)
+	require.NoError(t, err)
+	require.Equal(t, "done", string(encoded))
+
+	var output *string
+	require.NoError(t, Decode([]byte("done"), &output))
+	require.NotNil(t, output)
+	require.Equal(t, "done", *output)
+
+	var deeper **string
+	require.NoError(t, Decode([]byte("done"), &deeper))
+	require.NotNil(t, deeper)
+	require.Equal(t, "done", **deeper)
+
+	var bytesOutput *[]byte
+	require.NoError(t, Decode([]byte("raw"), &bytesOutput))
+	require.NotNil(t, bytesOutput)
+	require.Equal(t, []byte("raw"), *bytesOutput)
+}
+
+func TestPointerToNilPointerEncodesToNil(t *testing.T) {
+	var pointer *string
+	encoded, err := Encode(&pointer)
+	require.NoError(t, err)
+	require.Nil(t, encoded)
+
+	var empty any
+	encoded, err = Encode(&empty)
+	require.NoError(t, err)
+	require.Nil(t, encoded)
+}
+
+func TestEmptyDataZeroesAPointerOutput(t *testing.T) {
+	text := "old"
+	output := &text
+	require.NoError(t, Decode(nil, &output))
+	require.Nil(t, output)
+}
+
+func TestPointerToAnyHoldingAPointerEncodesWhatItHolds(t *testing.T) {
+	text := "done"
+	var value any = &text
+	encoded, err := Encode(&value)
+	require.NoError(t, err)
+	require.Equal(t, "done", string(encoded))
+}
+
+func TestPointerOutputOfAStructStillDecodesJSON(t *testing.T) {
+	type receipt struct {
+		ID string `json:"id"`
+	}
+	var output *receipt
+	require.NoError(t, Decode([]byte(`{"id":"a"}`), &output))
+	require.NotNil(t, output)
+	require.Equal(t, "a", output.ID)
+}
