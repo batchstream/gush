@@ -89,7 +89,8 @@ func WithMaxAttempts(attempts int32) Option {
 	return commonOption(apply)
 }
 
-// WithNoRetry adds ApplicationError types that fail immediately instead of retrying.
+// WithNoRetry adds ApplicationError types that fail immediately instead of retrying. See
+// RetryPolicy.NoRetry for entries that name a timeout, where an unknown name is an error.
 func WithNoRetry(errorTypes ...string) Option {
 	apply := func(config *CommonConfig) {
 		config.NoRetry = append(config.NoRetry, errorTypes...)

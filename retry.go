@@ -58,6 +58,7 @@ type RetryPolicy struct {
 	// NoRetry lists the ApplicationError types that fail immediately. An entry starting with
 	// TemporalTimeout: names a timeout instead, such as StepTimeoutErrorType. Naming a timeout
 	// Temporal does not know is an error, unless there is only one attempt and so no retry.
+	// Use the short name: Temporal also accepts TIMEOUT_TYPE_START_TO_CLOSE, which never matches.
 	NoRetry []string `json:"no_retry"`
 }
 

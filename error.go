@@ -52,7 +52,9 @@ func IsFlowRunningError(err error) bool {
 // IsInvalidConfigError reports whether a request was refused as invalid, so sending it again
 // cannot succeed: Gush found settings Temporal refuses, including in a flow that has since
 // failed on them, or the server answered InvalidArgument. The server gives that answer for
-// more than settings, such as an input over its size limit.
+// more than settings, such as an input over its size limit. Past a flow it sees through Abort,
+// NewPermanentError and %w, but not errors.Join or several %w, and not a client's refusal inside
+// a step, whose text is all that crosses the step.
 func IsInvalidConfigError(err error) bool {
 	if errors.Is(err, errInvalidConfig) {
 		return true
