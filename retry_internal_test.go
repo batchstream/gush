@@ -2,6 +2,7 @@ package gush
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"time"
 )
@@ -19,7 +20,7 @@ func TestRetryPolicyValidate(t *testing.T) {
 		"unspecified timeout":  {NoRetry: []string{"TemporalTimeout:Unspecified"}},
 	}
 	for name, policy := range invalid {
-		err := policy.validate()
+		err := policy.validate(defaultStepAttempts)
 		if !errors.Is(err, errInvalidConfig) {
 			t.Errorf("%s: validate() = %v, want an invalid config error", name, err)
 		}
@@ -36,9 +37,33 @@ func TestRetryPolicyValidate(t *testing.T) {
 		"another timeout":    {NoRetry: []string{"TemporalTimeout:Heartbeat"}},
 	}
 	for name, policy := range valid {
-		if err := policy.validate(); err != nil {
+		if err := policy.validate(defaultStepAttempts); err != nil {
 			t.Errorf("%s: validate() = %v", name, err)
 		}
+	}
+}
+
+// Temporal does not look at NoRetry when there is only one attempt, so flows that do this run
+// today, and rejecting it would fail them on replay.
+func TestRetryPolicyValidateAcceptsAnUnknownTimeoutWithOneAttempt(t *testing.T) {
+	unknown := []string{"TemporalTimeout:Soon"}
+
+	explicit := RetryPolicy{MaxAttempts: 1, NoRetry: unknown}
+	if err := explicit.validate(defaultStepAttempts); err != nil {
+		t.Errorf("one attempt on a step: validate() = %v", err)
+	}
+
+	byDefault := RetryPolicy{NoRetry: unknown}
+	if err := byDefault.validate(defaultFlowAttempts); err != nil {
+		t.Errorf("a flow's default of one attempt: validate() = %v", err)
+	}
+	if err := byDefault.validate(defaultStepAttempts); !errors.Is(err, errInvalidConfig) {
+		t.Errorf("a step's default of ten attempts: validate() = %v, want an invalid config error", err)
+	}
+
+	retried := RetryPolicy{MaxAttempts: 2, NoRetry: unknown}
+	if err := retried.validate(defaultFlowAttempts); !errors.Is(err, errInvalidConfig) {
+		t.Errorf("two attempts on a flow: validate() = %v, want an invalid config error", err)
 	}
 }
 
@@ -85,8 +110,16 @@ func TestStepConfigValidate(t *testing.T) {
 		"no attempt timeout":       func(config *StepConfig) { config.AttemptTimeout = 0 },
 		"negative attempt timeout": func(config *StepConfig) { config.AttemptTimeout = -time.Second },
 		"negative heartbeat":       func(config *StepConfig) { config.HeartbeatTimeout = -time.Second },
-		"negative pickup":          func(config *StepConfig) { config.PickupTimeout = -time.Second },
 		"a bad retry policy":       func(config *StepConfig) { config.MaxAttempts = -2 },
+		"negative attempt timeout with a pickup timeout": func(config *StepConfig) {
+			config.AttemptTimeout = -time.Second
+			config.PickupTimeout = time.Minute
+		},
+		"no attempt timeout and no overall limit": func(config *StepConfig) {
+			config.AttemptTimeout = 0
+			config.PickupTimeout = time.Minute
+			config.MaxAttempts = UnlimitedAttempts
+		},
 	}
 	for name, change := range invalid {
 		config := DefaultStepConfig()
@@ -97,12 +130,30 @@ func TestStepConfigValidate(t *testing.T) {
 		}
 	}
 
-	config := DefaultStepConfig()
-	config.HeartbeatTimeout = time.Second
-	config.PickupTimeout = time.Second
-	err := config.validate()
-	if err != nil {
-		t.Errorf("valid settings: validate() = %v", err)
+	valid := map[string]func(config *StepConfig){
+		"every timeout": func(config *StepConfig) {
+			config.HeartbeatTimeout = time.Second
+			config.PickupTimeout = time.Second
+		},
+		// Gush sends Temporal no pickup timeout for this.
+		"negative pickup": func(config *StepConfig) { config.PickupTimeout = -time.Second },
+		// The overall limit is the timeout Temporal needs.
+		"a pickup timeout instead of an attempt timeout": func(config *StepConfig) {
+			config.AttemptTimeout = 0
+			config.PickupTimeout = 30 * time.Second
+		},
+		"attempts too many to total": func(config *StepConfig) {
+			config.MaxAttempts = math.MaxInt32
+			config.PickupTimeout = time.Minute
+		},
+	}
+	for name, change := range valid {
+		config := DefaultStepConfig()
+		change(config)
+		err := config.validate()
+		if err != nil {
+			t.Errorf("%s: validate() = %v", name, err)
+		}
 	}
 }
 

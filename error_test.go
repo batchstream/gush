@@ -411,8 +411,10 @@ func TestIsInvalidConfigError(t *testing.T) {
 	request := FlowRequest{Flow: "AnyFlow"}
 	_, invalid := client.StartFlow(context.Background(), request, WithConfig(config))
 	rejected := serviceerror.NewInvalidArgument("the server said no")
+	// What a flow that failed on its settings looks like once it leaves the flow.
+	failedFlow := NewPermanentError("invalid config", invalidConfigErrorType, nil)
 
-	recognized := []error{invalid, fmt.Errorf("start: %w", invalid), rejected, fmt.Errorf("start: %w", rejected)}
+	recognized := []error{failedFlow, fmt.Errorf("run: %w", failedFlow), invalid, fmt.Errorf("start: %w", invalid), rejected, fmt.Errorf("start: %w", rejected)}
 	for _, err := range recognized {
 		if !IsInvalidConfigError(err) {
 			t.Errorf("IsInvalidConfigError(%v) = false", err)

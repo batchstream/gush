@@ -18,7 +18,8 @@ type FlowConfig struct {
 	// ID is the flow ID. If empty, one is generated.
 	ID string `json:"id"`
 
-	// Timeout limits the whole execution, including every retry. Zero means unlimited.
+	// Timeout limits the whole execution, including every retry. Zero means unlimited, and a
+	// negative one is an error.
 	Timeout time.Duration `json:"timeout"`
 
 	// ErrorIfRunning makes a client's RunFlow or StartFlow fail rather than join a flow
@@ -45,7 +46,7 @@ func (config *FlowConfig) validate() error {
 	if config.Timeout < 0 {
 		return fmt.Errorf("%w: timeout %v must not be negative", errInvalidConfig, config.Timeout)
 	}
-	return config.RetryPolicy.validate()
+	return config.RetryPolicy.validate(defaultFlowAttempts)
 }
 
 // Apply applies options to config in order.

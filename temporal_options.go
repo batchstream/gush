@@ -1,8 +1,6 @@
 package gush
 
 import (
-	"time"
-
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
@@ -79,8 +77,12 @@ func newActivityOptions(config *StepConfig) workflow.ActivityOptions {
 		if retryPolicy.MaximumAttempts > 0 {
 			resolved := config.RetryPolicy
 			resolved.MaxAttempts = retryPolicy.MaximumAttempts
-			perAttempt := config.PickupTimeout + config.AttemptTimeout
-			options.ScheduleToCloseTimeout = time.Duration(resolved.MaxAttempts)*perAttempt + resolved.totalBackoff()
+			perAttempt := addDurations(config.PickupTimeout, config.AttemptTimeout)
+			total := addDurations(scaleDuration(resolved.MaxAttempts, perAttempt), resolved.totalBackoff())
+			// A total too long to hold is as good as unlimited attempts.
+			if total < maxDuration {
+				options.ScheduleToCloseTimeout = total
+			}
 		}
 	}
 	return options

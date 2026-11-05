@@ -3,6 +3,7 @@ package gush
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -23,8 +24,15 @@ const (
 // ApplicationError type, and Temporal rejects one naming an unknown timeout.
 const timeoutErrorTypePrefix = "TemporalTimeout:"
 
-// errInvalidConfig marks settings that Temporal could never run. See IsInvalidConfigError.
+// invalidConfigErrorType is the ApplicationError type of a flow that failed on settings
+// validate rejected, which lets IsInvalidConfigError recognize it after it leaves the flow.
+const invalidConfigErrorType = "InvalidConfig"
+
+// errInvalidConfig marks settings that Temporal refuses. See IsInvalidConfigError.
 var errInvalidConfig = errors.New("gush: invalid config")
+
+// maxDuration is the longest time a time.Duration can hold.
+const maxDuration = time.Duration(math.MaxInt64)
 
 // RetryPolicy defines how flows and steps are retried after they fail. Every setting left
 // at zero uses its default.
@@ -46,15 +54,18 @@ type RetryPolicy struct {
 	MaxAttempts int32 `json:"max_attempts"`
 
 	// NoRetry lists the ApplicationError types that fail immediately. An entry starting with
-	// TemporalTimeout: names a timeout instead, such as StepTimeoutErrorType, and any
-	// other timeout name is an error.
+	// TemporalTimeout: names a timeout instead, such as StepTimeoutErrorType. Naming a timeout
+	// Temporal does not know is an error, unless there is only one attempt and so no retry.
 	NoRetry []string `json:"no_retry"`
 }
 
-// validate rejects settings Temporal cannot run, which would leave a flow Running with its
-// tasks failing, and an attempt count that only a mistake produces, such as a budget computed
-// below zero, which must not turn into retrying forever.
-func (policy RetryPolicy) validate() error {
+// validate rejects settings Temporal refuses, which would leave a flow Running with its tasks
+// failing, and an attempt count that only a mistake produces, such as a budget computed below
+// zero, which must not turn into retrying forever.
+//
+// Flow code calls it, so it must not reject what Temporal accepts: a refused command leaves no
+// history for a replay to meet, while a stricter check fails a flow in flight that ran it.
+func (policy RetryPolicy) validate(defaultAttempts int32) error {
 	switch {
 	case policy.MaxAttempts < UnlimitedAttempts:
 		return fmt.Errorf("%w: max attempts %d must be positive, zero for the default, or UnlimitedAttempts", errInvalidConfig, policy.MaxAttempts)
@@ -66,6 +77,10 @@ func (policy RetryPolicy) validate() error {
 		return fmt.Errorf("%w: max interval %v must not be negative", errInvalidConfig, policy.MaxInterval)
 	}
 
+	// With only one attempt Temporal does not look at NoRetry.
+	if policy.attempts(defaultAttempts) == 1 {
+		return nil
+	}
 	for _, errorType := range policy.NoRetry {
 		timeoutName, isTimeout := strings.CutPrefix(errorType, timeoutErrorTypePrefix)
 		if !isTimeout {
@@ -77,6 +92,14 @@ func (policy RetryPolicy) validate() error {
 		}
 	}
 	return nil
+}
+
+// attempts returns MaxAttempts with zero read as the given default.
+func (policy RetryPolicy) attempts(defaultAttempts int32) int32 {
+	if policy.MaxAttempts == 0 {
+		return defaultAttempts
+	}
+	return policy.MaxAttempts
 }
 
 // intervals returns the first delay and the cap, applying the defaults Temporal gives zero
@@ -105,23 +128,42 @@ func (policy RetryPolicy) totalBackoff() time.Duration {
 	var total time.Duration
 	for retries := policy.MaxAttempts - 1; retries > 0; retries-- {
 		if interval >= maxInterval {
-			return total + time.Duration(retries)*maxInterval
+			return addDurations(total, scaleDuration(retries, maxInterval))
 		}
 		if coefficient <= 1 {
-			return total + time.Duration(retries)*interval
+			return addDurations(total, scaleDuration(retries, interval))
 		}
-		total += interval
-		interval = time.Duration(float64(interval) * coefficient)
+		total = addDurations(total, interval)
+
+		next := float64(interval) * coefficient
+		if next >= float64(maxInterval) {
+			interval = maxInterval
+			continue
+		}
+		interval = time.Duration(next)
 	}
 	return total
 }
 
+// addDurations returns a+b, stopping at maxDuration rather than overflowing.
+func addDurations(a, b time.Duration) time.Duration {
+	if b > 0 && a > maxDuration-b {
+		return maxDuration
+	}
+	return a + b
+}
+
+// scaleDuration returns count*duration, stopping at maxDuration rather than overflowing.
+func scaleDuration(count int32, duration time.Duration) time.Duration {
+	if duration > 0 && time.Duration(count) > maxDuration/duration {
+		return maxDuration
+	}
+	return time.Duration(count) * duration
+}
+
 // temporalPolicy returns the policy Temporal runs, which reads zero attempts as unlimited.
 func (policy RetryPolicy) temporalPolicy(defaultAttempts int32) *temporal.RetryPolicy {
-	attempts := policy.MaxAttempts
-	if attempts == 0 {
-		attempts = defaultAttempts
-	}
+	attempts := policy.attempts(defaultAttempts)
 
 	_, maxInterval := policy.intervals()
 	temporalPolicy := &temporal.RetryPolicy{

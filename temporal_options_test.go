@@ -2,6 +2,7 @@
 package gush
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -114,6 +115,22 @@ func TestPickupTimeoutWithUnlimitedAttemptsHasNoOverallLimit(t *testing.T) {
 		t.Errorf("schedule to close = %v", options.ScheduleToCloseTimeout)
 	}
 	if options.RetryPolicy.MaximumAttempts != 0 {
+		t.Errorf("attempts sent to Temporal = %d", options.RetryPolicy.MaximumAttempts)
+	}
+}
+
+// Temporal refuses a negative timeout, which is what the total would become by overflowing.
+func TestPickupTimeoutWithAttemptsTooManyToTotalHasNoOverallLimit(t *testing.T) {
+	config := DefaultStepConfig()
+	config.PickupTimeout = time.Minute
+	config.MaxAttempts = math.MaxInt32
+
+	options := newActivityOptions(config)
+
+	if options.ScheduleToCloseTimeout != 0 {
+		t.Errorf("schedule to close = %v", options.ScheduleToCloseTimeout)
+	}
+	if options.RetryPolicy.MaximumAttempts != math.MaxInt32 {
 		t.Errorf("attempts sent to Temporal = %d", options.RetryPolicy.MaximumAttempts)
 	}
 }

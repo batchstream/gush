@@ -113,7 +113,7 @@ func (flowCtx *FlowContext) RunStep(step any, input, output any, options ...Step
 	}
 	err = config.validate()
 	if err != nil {
-		return flowCtx.Abort(err)
+		return abortInvalidConfig(err)
 	}
 	payload, err := EncodePayload(input)
 	if err != nil {
@@ -142,7 +142,7 @@ func (flowCtx *FlowContext) RunFlow(request FlowRequest, options ...FlowOption) 
 	config := flowCtx.childFlowConfig(options)
 	err := config.validate()
 	if err != nil {
-		return flowCtx.Abort(err)
+		return abortInvalidConfig(err)
 	}
 
 	childOptions := newChildWorkflowOptions(request.Queue, config)
@@ -178,7 +178,7 @@ func (flowCtx *FlowContext) StartFlow(request FlowRequest, options ...FlowOption
 	config := flowCtx.childFlowConfig(options)
 	err = config.validate()
 	if err != nil {
-		return "", flowCtx.Abort(err)
+		return "", abortInvalidConfig(err)
 	}
 
 	// Canceling a context also cancels the children started on it.
@@ -269,6 +269,12 @@ func (flowCtx *FlowContext) Decode(target any) error {
 		return flowCtx.Abort(err)
 	}
 	return nil
+}
+
+// abortInvalidConfig fails the flow over settings validate rejected.
+func abortInvalidConfig(err error) error {
+	cause := []error{err}
+	return abortError(invalidConfigErrorType, cause)
 }
 
 // Abort returns an error that fails the flow permanently, with no further retries.

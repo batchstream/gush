@@ -49,15 +49,20 @@ func IsFlowRunningError(err error) bool {
 	return temporal.IsWorkflowExecutionAlreadyStartedError(err)
 }
 
-// IsInvalidConfigError reports whether a flow or step did not start because of its settings:
-// Gush found settings Temporal could never run, or the server rejected the request as
-// invalid. Retrying the same settings cannot succeed.
+// IsInvalidConfigError reports whether a request was refused as invalid, so sending it again
+// cannot succeed: Gush found settings Temporal refuses, including in a flow that has since
+// failed on them, or the server answered InvalidArgument. The server gives that answer for
+// more than settings, such as an input over its size limit.
 func IsInvalidConfigError(err error) bool {
 	if errors.Is(err, errInvalidConfig) {
 		return true
 	}
 	var rejected *serviceerror.InvalidArgument
-	return errors.As(err, &rejected)
+	if errors.As(err, &rejected) {
+		return true
+	}
+	var applicationError *ApplicationError
+	return errors.As(err, &applicationError) && applicationError.Type() == invalidConfigErrorType
 }
 
 // IsPanicError reports whether err is a PanicError.

@@ -13,14 +13,16 @@ type StepConfig struct {
 	Queue string `json:"queue"`
 
 	// AttemptTimeout limits each attempt, not the step as a whole. It also bounds how long
-	// a suspended step waits for Resume.
+	// a suspended step waits for Resume. A negative one is an error, and so is zero, unless
+	// PickupTimeout and a limited number of attempts give the step an overall limit.
 	AttemptTimeout time.Duration `json:"attempt_timeout"`
 
 	// HeartbeatTimeout fails an attempt that goes this long without calling Heartbeat.
-	// Zero disables it.
+	// Zero disables it, and a negative one is an error.
 	HeartbeatTimeout time.Duration `json:"heartbeat_timeout"`
 
-	// PickupTimeout fails the step if no worker picks it up in time. Zero means unlimited.
+	// PickupTimeout fails the step if no worker picks it up in time. Zero or negative means
+	// unlimited.
 	PickupTimeout time.Duration `json:"pickup_timeout"`
 
 	// WaitForCancel makes RunStep wait for a canceled step to end. See WithWaitForCancel.
@@ -54,18 +56,22 @@ func (option stepOption) applyStep(config *StepConfig) {
 	option(config)
 }
 
-// validate rejects settings Temporal cannot run, which would leave the flow Running with its
-// tasks failing.
+// validate rejects settings Temporal refuses, judging the timeouts it would actually receive.
+// See RetryPolicy.validate for why it must not go further.
 func (config *StepConfig) validate() error {
-	switch {
-	case config.AttemptTimeout <= 0:
-		return fmt.Errorf("%w: attempt timeout %v must be positive", errInvalidConfig, config.AttemptTimeout)
-	case config.HeartbeatTimeout < 0:
-		return fmt.Errorf("%w: heartbeat timeout %v must not be negative", errInvalidConfig, config.HeartbeatTimeout)
-	case config.PickupTimeout < 0:
-		return fmt.Errorf("%w: pickup timeout %v must not be negative", errInvalidConfig, config.PickupTimeout)
+	err := config.RetryPolicy.validate(defaultStepAttempts)
+	if err != nil {
+		return err
 	}
-	return config.RetryPolicy.validate()
+
+	options := newActivityOptions(config)
+	switch {
+	case options.StartToCloseTimeout < 0, options.StartToCloseTimeout == 0 && options.ScheduleToCloseTimeout == 0:
+		return fmt.Errorf("%w: attempt timeout %v must be positive", errInvalidConfig, config.AttemptTimeout)
+	case options.HeartbeatTimeout < 0:
+		return fmt.Errorf("%w: heartbeat timeout %v must not be negative", errInvalidConfig, config.HeartbeatTimeout)
+	}
+	return nil
 }
 
 // WithQueue runs the step on another task queue.
