@@ -124,7 +124,8 @@ func (policy RetryPolicy) intervals() (initial, maximum time.Duration) {
 // totalBackoff returns the time spent waiting between attempts if all MaxAttempts are used,
 // applying the same defaults Temporal does to zero settings. The delay before retry k is
 // interval*coefficient^k until it reaches the cap, so this sums that run in closed form, as
-// Temporal computes each delay. A loop over the retries ran inside the flow and, with millions
+// Temporal computes each delay, and rounds up: Temporal truncates each delay, so the total
+// never falls short of its own. A loop over the retries ran inside the flow and, with millions
 // of attempts and delays too small to grow, held it past the deadlock detector's limit.
 func (policy RetryPolicy) totalBackoff() time.Duration {
 	retries := policy.MaxAttempts - 1
@@ -136,7 +137,7 @@ func (policy RetryPolicy) totalBackoff() time.Duration {
 	if coefficient == 0 {
 		coefficient = 2.0
 	}
-	if coefficient <= 1 || interval >= maxInterval {
+	if math.IsNaN(coefficient) || coefficient <= 1 || interval >= maxInterval {
 		return scaleDuration(retries, interval)
 	}
 
@@ -144,11 +145,12 @@ func (policy RetryPolicy) totalBackoff() time.Duration {
 	// counts the delay equal to the cap on either side, which gives the same total.
 	growing := math.Ceil(math.Log(float64(maxInterval)/float64(interval)) / math.Log(coefficient))
 	geometric := min(float64(retries), growing)
-	sum := float64(interval) * (math.Pow(coefficient, geometric) - 1) / (coefficient - 1)
+	// Dividing first keeps a huge coefficient from overflowing the product.
+	sum := float64(interval) * ((math.Pow(coefficient, geometric) - 1) / (coefficient - 1))
 
 	total := maxDuration
 	if sum < float64(maxDuration) {
-		total = time.Duration(sum)
+		total = time.Duration(math.Ceil(sum))
 	}
 	return addDurations(total, scaleDuration(retries-int32(geometric), maxInterval))
 }
