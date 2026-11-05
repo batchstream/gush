@@ -99,20 +99,21 @@ func TestMalformedResumeTokenIsAResumeTokenError(t *testing.T) {
 	assert.True(t, gush.IsResumeTokenError(err), "%v", err)
 }
 
-func TestGoneStepIsAlsoAResumeTokenError(t *testing.T) {
+func TestStaleResumeTokenIsAlsoAResumeTokenError(t *testing.T) {
 	err := fmt.Errorf("resume: %w", serviceerror.NewNotFound("activity task not found"))
 
-	assert.True(t, gush.IsStepGoneError(err), "%v", err)
+	assert.True(t, gush.IsStaleResumeTokenError(err), "%v", err)
 	assert.True(t, gush.IsResumeTokenError(err), "%v", err)
 }
 
-func TestBadResumeTokenIsNotAGoneStep(t *testing.T) {
+func TestBadResumeTokenIsNotStale(t *testing.T) {
 	client := &gush.Client{}
 	malformed := client.Resume(context.Background(), "!!!not-base64!!!", nil, nil)
 	rejected := serviceerror.NewInvalidArgument("Error deserializing task token.")
+	noNamespace := serviceerror.NewNamespaceNotFound("namespace")
 
-	for _, err := range []error{malformed, rejected} {
+	for _, err := range []error{malformed, rejected, noNamespace} {
 		assert.True(t, gush.IsResumeTokenError(err), "%v", err)
-		assert.False(t, gush.IsStepGoneError(err), "%v", err)
+		assert.False(t, gush.IsStaleResumeTokenError(err), "%v", err)
 	}
 }
