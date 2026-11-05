@@ -72,7 +72,9 @@ type StepInfo struct {
 //
 // A result over Temporal's blob size limit, 2MiB by default, fails the step on the server while
 // Resume returns nil, because the server accepts the request and then refuses the result. One
-// over gRPC's 4MiB message limit makes Resume return an error IsInvalidConfigError recognizes.
+// over gRPC's 4MiB message limit makes Resume return an error IsInvalidConfigError recognizes,
+// and the step stays suspended with its token still valid: resume it again with a smaller
+// result or an error, or it waits until its attempt times out and is retried under its policy.
 func (c *Client) Resume(ctx context.Context, resumeToken string, result any, stepErr error) error {
 	token, err := decodeResumeToken(resumeToken)
 	if err != nil {

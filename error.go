@@ -56,9 +56,9 @@ func IsFlowRunningError(err error) bool {
 // failed on them, or the server answered InvalidArgument. The server gives that answer for
 // more than settings, such as an input over its blob size limit, 2MiB by default. A request over
 // gRPC's message size limit, 4MiB by default, is refused before it reaches Temporal, and that
-// counts too. Past a flow it sees through Abort,
-// NewPermanentError and %w, but not errors.Join or several %w, and not a client's refusal inside
-// a step, whose text is all that crosses the step.
+// counts too. Past a flow it sees through Abort, NewPermanentError and %w, but not errors.Join
+// or several %w, and not a client's refusal inside a step, whose text is all that crosses the
+// step.
 func IsInvalidConfigError(err error) bool {
 	if errors.Is(err, errInvalidConfig) {
 		return true
