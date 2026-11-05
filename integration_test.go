@@ -85,7 +85,7 @@ func runWithTemporal(m *testing.M) int {
 	serveContext, stopServing := context.WithCancel(context.Background())
 	testWorker := gush.NewWorker(testQueue).
 		WithFlows(InvalidStepTimeoutFlow, InvalidNoRetryFlow, InvalidChildTimeoutFlow, InvalidGrandchildFlow, WrappedInvalidSettingsFlow, PointerOutputFlow).
-		WithFlows(NegativePickupFlow, PickupInsteadOfAttemptFlow, OneAttemptNoRetryFlow, ChildNoRetryFlow, TooManyAttemptsFlow, TooManyAttemptsOnlyPickupFlow).
+		WithFlows(RetriedApprovalFlow, NegativePickupFlow, PickupInsteadOfAttemptFlow, OneAttemptNoRetryFlow, ChildNoRetryFlow, TooManyAttemptsFlow, TooManyAttemptsOnlyPickupFlow).
 		WithFlows(CancelableApprovalFlow, InvalidStepAttemptsFlow, InvalidChildAttemptsFlow, InvalidStartAttemptsFlow,
 			HighInitialIntervalFlow, Double, FailingFlow, ParentOfFailingFlow, FailingStepFlow, PlainFailureFlow, AbortFlow, ApprovalFlow,
 			ExpiringApprovalFlow, TimeoutFlow, HeartbeatFlow, SilentFlow, ReplayFlow, AttributesFlow, AttributesChildFlow,
@@ -418,6 +418,49 @@ func TestSuspendedStepFinishesWithResume(t *testing.T) {
 	err := testClient.Resume(ctx, token, "again", nil)
 	require.Error(t, err)
 	assert.True(t, gush.IsResumeTokenError(err), "%v", err)
+	assert.True(t, gush.IsStaleResumeTokenError(err), "%v", err)
+}
+
+func RetriedApprovalFlow(ctx *gush.FlowContext) (any, error) {
+	var decision string
+	err := ctx.RunStep(ApprovalStep, string(ctx.Input), &decision,
+		gush.WithAttemptTimeout(3*time.Second),
+		gush.WithMaxAttempts(2),
+		gush.WithInitialInterval(retryBackoff),
+	)
+	return decision, err
+}
+
+// The step is still alive here, waiting on its second attempt, and only that token finishes it.
+func TestFirstAttemptsTokenIsStaleWhileTheSecondAttemptWaits(t *testing.T) {
+	ctx := testContext(t)
+	key := uniqueKey(t)
+
+	result := make(chan error, 1)
+	var decision string
+	go func() { result <- testClient.RunFlow(ctx, flowRequest(RetriedApprovalFlow, key, &decision)) }()
+
+	first := <-resumeTokens
+	second := <-resumeTokens
+
+	err := testClient.Resume(ctx, first, "late", nil)
+	require.Error(t, err)
+	assert.True(t, gush.IsStaleResumeTokenError(err), "%v", err)
+
+	require.NoError(t, testClient.Resume(ctx, second, "approved", nil))
+	require.NoError(t, <-result)
+	assert.Equal(t, "approved", decision)
+}
+
+// The server rejects these as unreadable, which is not the same as a token whose attempt is over.
+func TestUnreadableResumeTokenIsNotStale(t *testing.T) {
+	ctx := testContext(t)
+
+	err := testClient.Resume(ctx, "bnVsbA==", "result", nil)
+
+	require.Error(t, err)
+	assert.True(t, gush.IsResumeTokenError(err), "%v", err)
+	assert.False(t, gush.IsStaleResumeTokenError(err), "%v", err)
 }
 
 func TestSuspendedStepFailsWithResumeError(t *testing.T) {

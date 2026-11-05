@@ -3,12 +3,14 @@ package gush_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/batchstream/gush"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/activity"
 )
 
@@ -95,4 +97,23 @@ func TestMalformedResumeTokenIsAResumeTokenError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, gush.IsResumeTokenError(err), "%v", err)
+}
+
+func TestStaleResumeTokenIsAlsoAResumeTokenError(t *testing.T) {
+	err := fmt.Errorf("resume: %w", serviceerror.NewNotFound("activity task not found"))
+
+	assert.True(t, gush.IsStaleResumeTokenError(err), "%v", err)
+	assert.True(t, gush.IsResumeTokenError(err), "%v", err)
+}
+
+func TestBadResumeTokenIsNotStale(t *testing.T) {
+	client := &gush.Client{}
+	malformed := client.Resume(context.Background(), "!!!not-base64!!!", nil, nil)
+	rejected := serviceerror.NewInvalidArgument("Error deserializing task token.")
+	noNamespace := serviceerror.NewNamespaceNotFound("namespace")
+
+	for _, err := range []error{malformed, rejected, noNamespace} {
+		assert.True(t, gush.IsResumeTokenError(err), "%v", err)
+		assert.False(t, gush.IsStaleResumeTokenError(err), "%v", err)
+	}
 }

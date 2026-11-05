@@ -53,7 +53,8 @@ type StepInfo struct {
 	// FairKey is this step's fairness group.
 	FairKey string
 
-	// ResumeToken is what Resume needs to finish this step after it suspends.
+	// ResumeToken is what Resume needs to finish this step after it suspends. It belongs to
+	// this attempt, and a retry gets a new one.
 	ResumeToken string
 
 	// Attempt counts from 1.
@@ -132,8 +133,8 @@ func withoutCanceledCause(err error) error {
 	return temporal.NewApplicationErrorWithOptions(appErr.Message(), appErr.Type(), options)
 }
 
-// IsResumeTokenError reports whether Resume failed because its token is invalid or the
-// step no longer exists, such as after it timed out or was already resumed.
+// IsResumeTokenError reports whether Resume failed because its token is invalid, or stale as
+// IsStaleResumeTokenError describes.
 func IsResumeTokenError(err error) bool {
 	if errors.Is(err, errInvalidResumeToken) {
 		return true
@@ -149,6 +150,14 @@ func IsResumeTokenError(err error) bool {
 		return true
 	}
 
+	return IsStaleResumeTokenError(err)
+}
+
+// IsStaleResumeTokenError reports whether Resume failed because its token's attempt is over:
+// the step ended, or it is retrying under a new token. That makes it a late callback rather
+// than a bad one, though the server cannot tell it from a well-formed token that matches no
+// step, such as a corrupted one. Every such error is also an IsResumeTokenError.
+func IsStaleResumeTokenError(err error) bool {
 	var notFound *serviceerror.NotFound
 	return errors.As(err, &notFound)
 }
