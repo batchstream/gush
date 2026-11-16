@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/log"
-	"go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
@@ -26,7 +26,7 @@ const (
 // otelPlaceholderPackage holds the type of OpenTelemetry's global LoggerProvider before
 // anyone sets one. Package order decides whether a host's init runs before gush's, so the
 // placeholder has to be recognized by type rather than remembered at startup.
-const otelPlaceholderPackage = "go.opentelemetry.io/otel/log/internal/global"
+const otelPlaceholderPackage = "go.opentelemetry.io/otel/internal/global"
 
 // logProviderConfigured reports whether a LoggerProvider has been set as the global one.
 func logProviderConfigured(provider log.LoggerProvider) bool {
@@ -46,7 +46,7 @@ var stderrLogEmitter = sync.OnceValue(func() log.Logger {
 // activeLogEmitter resolves the destination for each record, so a Logger created before
 // logging was configured still reaches the configured destination.
 func activeLogEmitter() log.Logger {
-	provider := global.GetLoggerProvider()
+	provider := otel.GetLoggerProvider()
 	if !logProviderConfigured(provider) {
 		return stderrLogEmitter()
 	}
@@ -66,7 +66,7 @@ var logExport struct {
 // set the protocol, headers and TLS, and the default protocol is http/protobuf. Dial calls
 // it, so call it directly only for a process that logs without a Client.
 //
-// A LoggerProvider the host already set with OpenTelemetry's global.SetLoggerProvider
+// A LoggerProvider the host already set with OpenTelemetry's otel.SetLoggerProvider
 // always wins, and InitLogExport leaves it alone. Importing gush never changes the global
 // provider; InitLogExport sets it only when it starts exporting. With no provider and no
 // endpoint, logs go to standard error.
@@ -80,7 +80,7 @@ func InitLogExport() (shutdown func(), err error) {
 		logExport.users++
 		return sync.OnceFunc(releaseLogExport), nil
 	}
-	current := global.GetLoggerProvider()
+	current := otel.GetLoggerProvider()
 	if logProviderConfigured(current) {
 		return func() {}, nil
 	}
@@ -97,7 +97,7 @@ func InitLogExport() (shutdown func(), err error) {
 	logExport.provider = sdklog.NewLoggerProvider(sdklog.WithProcessor(processor))
 	logExport.previous = current
 	logExport.users = 1
-	global.SetLoggerProvider(logExport.provider)
+	otel.SetLoggerProvider(logExport.provider)
 
 	return sync.OnceFunc(releaseLogExport), nil
 }
@@ -115,8 +115,8 @@ func releaseLogExport() {
 
 	provider := logExport.provider
 	logExport.provider = nil
-	if global.GetLoggerProvider() == provider {
-		global.SetLoggerProvider(logExport.previous)
+	if otel.GetLoggerProvider() == provider {
+		otel.SetLoggerProvider(logExport.previous)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), logShutdownTimeout)
