@@ -13,7 +13,7 @@ import (
 	"github.com/batchstream/gush"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
@@ -59,9 +59,9 @@ func captureLogs(t *testing.T) *memoryLogExporter {
 	processor := sdklog.NewSimpleProcessor(exporter)
 	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(processor))
 
-	previous := global.GetLoggerProvider()
-	global.SetLoggerProvider(provider)
-	t.Cleanup(func() { global.SetLoggerProvider(previous) })
+	previous := otel.GetLoggerProvider()
+	otel.SetLoggerProvider(provider)
+	t.Cleanup(func() { otel.SetLoggerProvider(previous) })
 
 	return exporter
 }
@@ -69,7 +69,7 @@ func captureLogs(t *testing.T) *memoryLogExporter {
 func attributesOf(record sdklog.Record) map[string]string {
 	attributes := make(map[string]string)
 	record.WalkAttributes(func(attr gush.LogAttribute) bool {
-		attributes[string(attr.Key)] = attr.Value.Emit()
+		attributes[string(attr.Key)] = attr.Value.String()
 		return true
 	})
 	return attributes
@@ -185,9 +185,9 @@ func captureStderr(t *testing.T, writes func()) string {
 func TestStderrLogExporterFormat(t *testing.T) {
 	processor := sdklog.NewSimpleProcessor(gush.NewStderrLogExporter())
 	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(processor))
-	previous := global.GetLoggerProvider()
-	global.SetLoggerProvider(provider)
-	t.Cleanup(func() { global.SetLoggerProvider(previous) })
+	previous := otel.GetLoggerProvider()
+	otel.SetLoggerProvider(provider)
+	t.Cleanup(func() { otel.SetLoggerProvider(previous) })
 
 	output := captureStderr(t, func() { gush.NewLogger().Print("hello") })
 

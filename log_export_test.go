@@ -17,7 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	logcollector "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	"google.golang.org/grpc"
@@ -179,11 +179,11 @@ func assertCollected(t *testing.T, collected *collectedLogs, body string) {
 }
 
 // unconfiguredLogProvider is the global provider these tests start with and restore.
-var unconfiguredLogProvider = global.GetLoggerProvider()
+var unconfiguredLogProvider = otel.GetLoggerProvider()
 
 func TestImportLeavesTheGlobalProviderAlone(t *testing.T) {
-	assert.Same(t, unconfiguredLogProvider, global.GetLoggerProvider())
-	assert.Contains(t, fmt.Sprintf("%T", global.GetLoggerProvider()), "global.")
+	assert.Same(t, unconfiguredLogProvider, otel.GetLoggerProvider())
+	assert.Contains(t, fmt.Sprintf("%T", otel.GetLoggerProvider()), "global.")
 }
 
 // A host's provider may be set before gush's package variables are initialized, so the
@@ -363,7 +363,7 @@ func TestRejectsAnEndpointThatIsNotAURL(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "must be an http:// or https:// URL")
 			assert.Contains(t, err.Error(), test.variable)
-			assert.Same(t, unconfiguredLogProvider, global.GetLoggerProvider())
+			assert.Same(t, unconfiguredLogProvider, otel.GetLoggerProvider())
 		})
 	}
 }
@@ -411,7 +411,7 @@ func TestRejectsAProtocolItCannotSend(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "is not supported")
 			assert.Contains(t, err.Error(), test.variable)
-			assert.Same(t, unconfiguredLogProvider, global.GetLoggerProvider())
+			assert.Same(t, unconfiguredLogProvider, otel.GetLoggerProvider())
 		})
 	}
 }
@@ -423,7 +423,7 @@ func TestNoEndpointLeavesGlobalProviderAlone(t *testing.T) {
 	require.NoError(t, err)
 	defer shutdown()
 
-	assert.Same(t, unconfiguredLogProvider, global.GetLoggerProvider())
+	assert.Same(t, unconfiguredLogProvider, otel.GetLoggerProvider())
 }
 
 func TestExportSetsTheGlobalProviderUntilItStops(t *testing.T) {
@@ -433,10 +433,10 @@ func TestExportSetsTheGlobalProviderUntilItStops(t *testing.T) {
 
 	shutdown, err := InitLogExport()
 	require.NoError(t, err)
-	assert.NotSame(t, unconfiguredLogProvider, global.GetLoggerProvider())
+	assert.NotSame(t, unconfiguredLogProvider, otel.GetLoggerProvider())
 
 	shutdown()
-	assert.Same(t, unconfiguredLogProvider, global.GetLoggerProvider())
+	assert.Same(t, unconfiguredLogProvider, otel.GetLoggerProvider())
 }
 
 func TestExportIsSharedUntilTheLastUserStops(t *testing.T) {
@@ -451,12 +451,12 @@ func TestExportIsSharedUntilTheLastUserStops(t *testing.T) {
 
 	first()
 	first() // running a shutdown twice must not count twice
-	assert.NotSame(t, unconfiguredLogProvider, global.GetLoggerProvider())
+	assert.NotSame(t, unconfiguredLogProvider, otel.GetLoggerProvider())
 
 	NewLogger(Attr("flow_id", "flow-123")).Print("after first stop")
 	second()
 
-	assert.Same(t, unconfiguredLogProvider, global.GetLoggerProvider())
+	assert.Same(t, unconfiguredLogProvider, otel.GetLoggerProvider())
 	assertCollected(t, collected, "after first stop")
 }
 
@@ -466,14 +466,14 @@ func TestHostProviderWinsOverEndpoints(t *testing.T) {
 	t.Setenv(envOTLPEndpoint, server.URL)
 
 	hostLogs := captureHostLogs(t)
-	host := global.GetLoggerProvider()
+	host := otel.GetLoggerProvider()
 
 	shutdown, err := InitLogExport()
 	require.NoError(t, err)
 	NewLogger().Print("to the host")
 	shutdown()
 
-	assert.Same(t, host, global.GetLoggerProvider())
+	assert.Same(t, host, otel.GetLoggerProvider())
 	assert.Equal(t, []string{"to the host"}, hostLogs.bodies())
 	_, reachedCollector := collected.attributesOf("to the host")
 	assert.False(t, reachedCollector)
@@ -485,17 +485,17 @@ func TestHostProviderSetAfterExportStartedTakesOver(t *testing.T) {
 	t.Setenv(envOTLPEndpoint, server.URL)
 
 	// Runs last, because captureHostLogs restores the export's stopped provider.
-	t.Cleanup(func() { global.SetLoggerProvider(unconfiguredLogProvider) })
+	t.Cleanup(func() { otel.SetLoggerProvider(unconfiguredLogProvider) })
 
 	shutdown, err := InitLogExport()
 	require.NoError(t, err)
 
 	hostLogs := captureHostLogs(t)
-	host := global.GetLoggerProvider()
+	host := otel.GetLoggerProvider()
 	NewLogger().Print("late host")
 	shutdown()
 
-	assert.Same(t, host, global.GetLoggerProvider())
+	assert.Same(t, host, otel.GetLoggerProvider())
 	assert.Equal(t, []string{"late host"}, hostLogs.bodies())
 }
 
@@ -531,9 +531,9 @@ func captureHostLogs(t *testing.T) *hostLogExporter {
 	processor := sdklog.NewSimpleProcessor(exporter)
 	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(processor))
 
-	previous := global.GetLoggerProvider()
-	global.SetLoggerProvider(provider)
-	t.Cleanup(func() { global.SetLoggerProvider(previous) })
+	previous := otel.GetLoggerProvider()
+	otel.SetLoggerProvider(provider)
+	t.Cleanup(func() { otel.SetLoggerProvider(previous) })
 
 	return exporter
 }
